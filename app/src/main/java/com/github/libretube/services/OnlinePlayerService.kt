@@ -5,6 +5,8 @@ import android.os.Bundle
 import android.util.Log
 import androidx.core.net.toUri
 import androidx.core.os.bundleOf
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.SessionAvailabilityListener
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.SubtitleConfiguration
@@ -13,6 +15,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import com.github.libretube.R
+import com.github.libretube.cast.CastMediaItemBuilder
 import com.github.libretube.api.JsonHelper
 import com.github.libretube.api.MediaServiceRepository
 import com.github.libretube.api.SubscriptionHelper
@@ -25,9 +28,11 @@ import com.github.libretube.enums.SbSkipOptions
 import com.github.libretube.extensions.TAG
 import com.github.libretube.extensions.parcelable
 import com.github.libretube.extensions.setMetadata
+import com.github.libretube.extensions.toID
 import com.github.libretube.extensions.toastFromMainDispatcher
 import com.github.libretube.extensions.toastFromMainThread
 import com.github.libretube.extensions.updateParameters
+import com.github.libretube.helpers.CastHelper
 import com.github.libretube.helpers.PlayerHelper
 import com.github.libretube.helpers.PlayerHelper.getCurrentSegment
 import com.github.libretube.helpers.PlayerHelper.getSubtitleRoleFlags
@@ -73,6 +78,20 @@ open class OnlinePlayerService : AbstractPlayerService() {
     /*
     Current job that's loading a new video (the value is null if no video is loading at the moment).
      */
+    
+    // Google Cast integration
+    private var castPlayer: CastPlayer? = null
+    private var isCasting = false
+    
+    private val castSessionListener = object : SessionAvailabilityListener {
+        override fun onCastSessionAvailable() {
+            switchToCastPlayer()
+        }
+        
+        override fun onCastSessionUnavailable() {
+            switchToLocalPlayer()
+        }
+    }
     private var fetchVideoInfoJob: Job? = null
 
     private val playerListener = object : Player.Listener {
@@ -103,9 +122,131 @@ open class OnlinePlayerService : AbstractPlayerService() {
                 }
             }
         }
-    }
 
-    override suspend fun onServiceCreated(args: Bundle) {
+    /**
+     * Get the currently active player (either local ExoPlayer or CastPlayer)
+     */
+    private fun getCurrentPlayer(): Player? {
+        return if (isCasting) castPlayer else exoPlayer
+    }
+    
+    /**
+     * Switch from local playback to Cast
+     */
+    private fun switchToCastPlayer() {
+        if (isCasting || streams == null) return
+        
+        try {
+            // Save current state
+            val currentPosition = exoPlayer?.currentPosition ?: 0L
+            val isPlaying = exoPlayer?.isPlaying ?: false
+            
+            // Initialize CastPlayer if needed
+            if (castPlayer == null) {
+                castPlayer = CastHelper.getCastPlayer(this)
+                castPlayer?.addListener(playerListener)
+                CastHelper.setSessionAvailabilityListener(castPlayer, castSessionListener)
+            }
+            
+            // Build MediaItem for Cast with full metadata
+            val mediaItem = streams?.let { 
+                CastMediaItemBuilder.buildFromStreams(it, videoId)
+            } ?: CastMediaItemBuilder.buildMinimal(videoId)
+            
+            // Setup Cast playback
+            castPlayer?.let { player ->
+                player.setMediaItem(mediaItem)
+                player.prepare()
+                player.seekTo(currentPosition)
+                if (isPlaying) player.play()
+                
+                // Sync playing queue to Cast
+                syncPlayingQueueToCast()
+                
+                isCasting = true
+                
+                // Pause local player
+                exoPlayer?.pause()
+                
+                Log.d(TAG(), "Switched to Cast playback")
+                toastFromMainThread(getString(R.string.cast_connected, 
+                    CastHelper.getConnectedDeviceName() ?: "TV"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG(), "Failed to switch to Cast", e)
+            toastFromMainThread("Cast error: ${e.message}")
+        }
+    }
+    
+    /**
+     * Switch from Cast back to local playback
+     */
+    private fun switchToLocalPlayer() {
+        if (!isCasting) return
+        
+        try {
+            // Save Cast state
+            val currentPosition = castPlayer?.currentPosition ?: 0L
+            val isPlaying = castPlayer?.isPlaying ?: false
+            
+            // Resume local playback
+            exoPlayer?.seekTo(currentPosition)
+            if (isPlaying) exoPlayer?.play()
+            
+            // Stop Cast
+            castPlayer?.stop()
+            
+            isCasting = false
+            
+            Log.d(TAG(), "Switched to local playback")
+            toastFromMainThread(getString(R.string.cast_disconnected))
+        } catch (e: Exception) {
+            Log.e(TAG(), "Failed to switch to local player", e)
+        }
+    }
+    
+    /**
+     * Synchronize the playing queue to Cast player
+     * Builds MediaItems for all queued videos
+     */
+    private fun syncPlayingQueueToCast() {
+        if (!isCasting) return
+        
+        try {
+            val queue = PlayingQueue.currentQueue()
+            if (queue.isEmpty()) return
+            
+            // Build MediaItems for queue
+            val mediaItems = queue.mapNotNull { queueItem ->
+                try {
+                    // Try to build with title from queue item
+                    CastMediaItemBuilder.buildMinimal(
+                        queueItem.url?.toID() ?: return@mapNotNull null,
+                        queueItem.title
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            
+            if (mediaItems.isNotEmpty()) {
+                castPlayer?.addMediaItems(mediaItems)
+                Log.d(TAG(), "Synced ${mediaItems.size} items to Cast queue")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG(), "Failed to sync queue to Cast: ${e.message}")
+        }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        
+        // Cleanup Cast resources
+        castPlayer?.removeListener(playerListener)
+        CastHelper.setSessionAvailabilityListener(castPlayer, null)
+        castPlayer = null
+        isCasting = false
+    }
         val playerData = args.parcelable<PlayerData>(IntentData.playerData)
         if (playerData == null) {
             stopSelf()
@@ -124,6 +265,22 @@ open class OnlinePlayerService : AbstractPlayerService() {
         exoPlayer?.addListener(playerListener)
         trackSelector?.updateParameters {
             setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, isAudioOnlyPlayer)
+        }
+        
+        // Initialize Cast if available
+        try {
+            castPlayer = CastHelper.getCastPlayer(this)
+            castPlayer?.let { player ->
+                player.addListener(playerListener)
+                CastHelper.setSessionAvailabilityListener(player, castSessionListener)
+                
+                // If already connected to Cast, switch immediately
+                if (CastHelper.isCastSessionAvailable()) {
+                    switchToCastPlayer()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG(), "Cast not available: ${e.message}")
         }
     }
 

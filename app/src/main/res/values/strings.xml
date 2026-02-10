@@ -458,6 +458,11 @@
     <string name="default_language">Default</string>
     <string name="behavior_when_minimized">Behavior when minimized</string>
     <string name="external_player">External player</string>
+    <string name="cast">Cast to TV</string>
+    <string name="cast_summary">Enable casting to TV devices (requires Google Play Services)</string>
+    <string name="casting">Casting…</string>
+    <string name="cast_connected">Connected to %s</string>
+    <string name="cast_disconnected">Disconnected from TV</string>
     <string name="screenshot">Screenshot</string>
     <string name="screenshot_saved">Screenshot saved</string>
     <string name="crashlog">Crashlog</string>

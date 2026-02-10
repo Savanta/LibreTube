@@ -85,6 +85,13 @@
             app:key="autoplay_countdown"
             app:title="@string/autoplay_countdown" />
 
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:icon="@drawable/ic_cast"
+            android:summary="@string/cast_summary"
+            app:key="cast_enabled"
+            app:title="@string/cast" />
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/captions">

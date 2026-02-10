@@ -54,6 +54,7 @@ import com.github.libretube.extensions.togglePlayPauseState
 import com.github.libretube.extensions.updateIfChanged
 import com.github.libretube.helpers.AudioHelper
 import com.github.libretube.helpers.BrightnessHelper
+import com.github.libretube.helpers.CastHelper
 import com.github.libretube.helpers.PlayerHelper
 import com.github.libretube.helpers.PreferenceHelper
 import com.github.libretube.helpers.WindowHelper
@@ -167,6 +168,7 @@ abstract class CustomExoPlayerView(
         initRewindAndForward()
         applyCaptionsStyle()
         initializeAdvancedOptions()
+        initializeCastButton()
 
         // don't let the player view hide its controls automatically
         controllerShowTimeoutMs = -1
@@ -1003,6 +1005,29 @@ abstract class CustomExoPlayerView(
 
     override fun getViewMeasures(): Pair<Int, Int> {
         return width to height
+    }
+
+    private fun initializeCastButton() {
+        val castEnabled = PreferenceHelper.getBoolean(PreferenceKeys.CAST_ENABLED, true)
+        if (!castEnabled) {
+            binding.castButton.isGone = true
+            return
+        }
+
+        try {
+            val castContext = CastHelper.getCastContext(context)
+            if (castContext != null) {
+                androidx.mediarouter.app.MediaRouteButton.setUpButton(
+                    context, binding.castButton
+                )
+                binding.castButton.isVisible = true
+            } else {
+                binding.castButton.isGone = true
+            }
+        } catch (e: Exception) {
+            Log.w(this::class.simpleName, "Cast not available: ${e.message}")
+            binding.castButton.isGone = true
+        }
     }
 
     open fun onPlaybackEvents(player: Player, events: Player.Events) {

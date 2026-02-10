@@ -2,7 +2,15 @@
   <img src="assets/banners/gh-banner.png" width="auto" height="auto" alt="LibreTube">
 
 [![GPL-v3](assets/widgets/license-widget.svg)](https://www.gnu.org/licenses/gpl-3.0.en.html)
-</div><div align="center" style="width:100%; display:flex; justify-content:space-between;">
+</div>
+
+> **🍴 Fork Notice**  
+> This is a personal fork of [LibreTube](https://github.com/libre-tube/LibreTube) with **Google Cast** support for SmartTube on Android TV.  
+> See [CAST_NOTICE.md](CAST_NOTICE.md) for details about Cast integration and licensing.
+
+---
+
+<div align="center" style="width:100%; display:flex; justify-content:space-between;">
 
 [![Matrix](assets/widgets/mat-widget.svg)](https://matrix.to/#/#LibreTube:matrix.org)
 [![Mastodon](assets/widgets/mast-widget.svg)](https://fosstodon.org/@libretube)

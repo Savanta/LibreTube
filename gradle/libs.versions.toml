@@ -24,6 +24,8 @@ kotlinxSerialization = "1.6.3"
 kotlinxDatetime = "0.6.2"
 media = "1.7.1"
 media3 = "1.9.1"
+playServicesCast = "21.5.0"
+mediarouter = "1.7.0"
 activity = "1.9.3"
 fragment = "1.8.9"
 uiautomator = "2.3.0"
@@ -62,6 +64,9 @@ androidx-media3-exoplayer-hls = { group = "androidx.media3", name="media3-exopla
 androidx-media3-exoplayer-dash = { group = "androidx.media3", name="media3-exoplayer-dash", version.ref="media3" }
 androidx-media3-session = { group="androidx.media3", name="media3-session", version.ref="media3" }
 androidx-media3-ui = { group="androidx.media3", name="media3-ui", version.ref="media3" }
+androidx-media3-cast = { group="androidx.media3", name="media3-cast", version.ref="media3" }
+play-services-cast-framework = { group="com.google.android.gms", name="play-services-cast-framework", version.ref="playServicesCast" }
+androidx-mediarouter = { group="androidx.mediarouter", name="mediarouter", version.ref="mediarouter" }
 newpipeextractor = { module = "com.github.libre-tube:NewPipeExtractor", version.ref = "newpipeextractor" }
 square-retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 converter-kotlinx-serialization = { group = "com.squareup.retrofit2", name = "converter-kotlinx-serialization", version.ref = "retrofit" }

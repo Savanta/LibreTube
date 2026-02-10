@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.ExistingPeriodicWorkPolicy
+import com.github.libretube.helpers.CastHelper
 import com.github.libretube.helpers.ImageHelper
 import com.github.libretube.helpers.NewPipeExtractorInstance
 import com.github.libretube.helpers.NotificationHelper
@@ -59,6 +60,11 @@ class LibreTubeApp : Application() {
         ShortcutHelper.createShortcuts(this)
 
         NewPipeExtractorInstance.init()
+
+        /**
+         * Initialize Google Cast Framework
+         */
+        CastHelper.initialize(this)
     }
 
     /**
