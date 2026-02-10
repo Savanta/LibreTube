@@ -52,12 +52,12 @@ object CastMediaItemBuilder {
     private fun getBestStreamUrl(streams: Streams, videoId: String): Uri {
         // Prefer HLS for Cast (best compatibility)
         streams.hls?.let { 
-            return ProxyHelper.unwrapUrlIfNeeded(it).toUri()
+            return ProxyHelper.unwrapUrl(it).toUri()
         }
         
         // Try DASH as fallback
         streams.dash?.let {
-            return ProxyHelper.unwrapUrlIfNeeded(it).toUri()
+            return ProxyHelper.unwrapUrl(it).toUri()
         }
         
         // Use highest quality video stream
@@ -66,7 +66,8 @@ object CastMediaItemBuilder {
             .maxByOrNull { it.height ?: 0 }
         
         bestStream?.let {
-            return ProxyHelper.unwrapUrlIfNeeded(it.url!!).toUri()
+            val url = it.url ?: return "https://www.youtube.com/watch?v=$videoId".toUri()
+            return ProxyHelper.unwrapUrl(url).toUri()
         }
         
         // Last resort: YouTube URL
@@ -91,7 +92,7 @@ object CastMediaItemBuilder {
      */
     private fun getArtworkUri(streams: Streams): Uri? {
         val thumbnailUrl = streams.thumbnailUrl ?: return null
-        return ProxyHelper.unwrapUrlIfNeeded(thumbnailUrl).toUri()
+        return ProxyHelper.unwrapUrl(thumbnailUrl).toUri()
     }
     
     /**
@@ -100,10 +101,11 @@ object CastMediaItemBuilder {
     private fun buildSubtitles(streams: Streams): List<MediaItem.SubtitleConfiguration> {
         return streams.subtitles.mapNotNull { subtitle ->
             try {
+                val subUrl = subtitle.url ?: return@mapNotNull null
                 MediaItem.SubtitleConfiguration.Builder(
-                    ProxyHelper.unwrapUrlIfNeeded(subtitle.url).toUri()
+                    ProxyHelper.unwrapUrl(subUrl).toUri()
                 )
-                    .setMimeType(getMimeType(subtitle.mimeType))
+                    .setMimeType(getMimeType(subtitle.mimeType ?: ""))
                     .setLanguage(subtitle.code)
                     .setLabel(subtitle.name)
                     .setSelectionFlags(0) // Not auto-selected

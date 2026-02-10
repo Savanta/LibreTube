@@ -1017,7 +1017,7 @@ abstract class CustomExoPlayerView(
         try {
             val castContext = CastHelper.getCastContext(context)
             if (castContext != null) {
-                androidx.mediarouter.app.MediaRouteButton.setUpButton(
+                com.google.android.gms.cast.framework.CastButtonFactory.setUpMediaRouteButton(
                     context, binding.castButton
                 )
                 binding.castButton.isVisible = true

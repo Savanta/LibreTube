@@ -104,7 +104,7 @@ object CastHelper {
      */
     fun setSessionAvailabilityListener(
         player: CastPlayer?,
-        listener: SessionAvailabilityListener
+        listener: SessionAvailabilityListener?
     ) {
         player?.setSessionAvailabilityListener(listener)
     }

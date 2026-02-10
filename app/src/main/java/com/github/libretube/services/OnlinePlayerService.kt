@@ -122,6 +122,7 @@ open class OnlinePlayerService : AbstractPlayerService() {
                 }
             }
         }
+    }
 
     /**
      * Get the currently active player (either local ExoPlayer or CastPlayer)
@@ -213,7 +214,7 @@ open class OnlinePlayerService : AbstractPlayerService() {
         if (!isCasting) return
         
         try {
-            val queue = PlayingQueue.currentQueue()
+            val queue = PlayingQueue.getStreams()
             if (queue.isEmpty()) return
             
             // Build MediaItems for queue
@@ -247,6 +248,8 @@ open class OnlinePlayerService : AbstractPlayerService() {
         castPlayer = null
         isCasting = false
     }
+
+    override suspend fun onServiceCreated(args: Bundle) {
         val playerData = args.parcelable<PlayerData>(IntentData.playerData)
         if (playerData == null) {
             stopSelf()

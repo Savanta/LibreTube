@@ -10,6 +10,14 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Force Cast SDK version compatible with Kotlin 1.9.25
+configurations.all {
+    resolutionStrategy {
+        force("com.google.android.gms:play-services-cast-framework:21.5.0")
+        force("com.google.android.gms:play-services-cast:21.5.0")
+    }
+}
+
 /*
 'keystore.properties' should look like the following:
 
