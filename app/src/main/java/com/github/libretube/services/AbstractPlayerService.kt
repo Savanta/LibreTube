@@ -262,6 +262,14 @@ abstract class AbstractPlayerService : MediaLibraryService(), MediaLibrarySessio
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
         mediaLibrarySession
 
+    /**
+     * Update the player used by the media session
+     * Used when switching between local ExoPlayer and CastPlayer
+     */
+    protected fun updateSessionPlayer(player: Player) {
+        mediaLibrarySession?.player = player
+    }
+
     override fun onCreate() {
         super.onCreate()
 

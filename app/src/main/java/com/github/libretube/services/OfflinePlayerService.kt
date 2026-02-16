@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.github.libretube.services
 
 import android.content.Intent
@@ -153,9 +155,9 @@ open class OfflinePlayerService : AbstractPlayerService() {
         val audioUri = downloadFiles.firstOrNull { it.type == FileType.AUDIO }?.path?.toAndroidUri()
         val subtitleInfo = downloadFiles.firstOrNull { it.type == FileType.SUBTITLE }
 
-        val videoSource = videoUri?.let { videoUri ->
+        val videoSource = videoUri?.let { uri ->
             val videoItem = MediaItem.Builder()
-                .setUri(videoUri)
+                .setUri(uri)
                 .setMetadata(downloadWithItems)
                 .build()
 
@@ -163,9 +165,9 @@ open class OfflinePlayerService : AbstractPlayerService() {
                 .createMediaSource(videoItem)
         }
 
-        val audioSource = audioUri?.let { audioUri ->
+        val audioSource = audioUri?.let { uri ->
             val audioItem = MediaItem.Builder()
-                .setUri(audioUri)
+                .setUri(uri)
                 .setMetadata(downloadWithItems)
                 .build()
 
@@ -173,14 +175,15 @@ open class OfflinePlayerService : AbstractPlayerService() {
                 .createMediaSource(audioItem)
         }
 
-        val subtitleSource = subtitleInfo?.let { subtitleInfo ->
-            val subtitle = SubtitleConfiguration.Builder(subtitleInfo.path.toAndroidUri())
+        @Suppress("DEPRECATION")
+        val subtitleSource = subtitleInfo?.let { subtitle ->
+            val subtitleConfig = SubtitleConfiguration.Builder(subtitle.path.toAndroidUri())
                 .setMimeType(MimeTypes.APPLICATION_TTML)
-                .setLanguage(subtitleInfo.language ?: "en")
+                .setLanguage(subtitle.language ?: "en")
                 .build()
 
             SingleSampleMediaSource.Factory(FileDataSource.Factory())
-                .createMediaSource(subtitle, C.TIME_UNSET)
+                .createMediaSource(subtitleConfig, C.TIME_UNSET)
         }
 
         var mediaSource: MediaSource? = null

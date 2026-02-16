@@ -103,13 +103,13 @@ class SearchResultFragment : DynamicLayoutManagerFragment(R.layout.fragment_sear
             binding.searchSuggestionContainer.setOnClickListener(null)
             if (suggestion == null) return@observe
 
-            val (suggestion, corrected) = suggestion
-            binding.searchSuggestion.text = suggestion
+            val (suggestionText, corrected) = suggestion
+            binding.searchSuggestion.text = suggestionText
             binding.searchSuggestionLabel.text = if (corrected) {
                 getString(R.string.showing_results_for)
             } else {
                 binding.searchSuggestionContainer.setOnClickListener {
-                    mainActivity.setQuery(suggestion, true)
+                    mainActivity.setQuery(suggestionText, true)
                 }
                 getString(R.string.did_you_mean)
             }

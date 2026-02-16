@@ -27,7 +27,7 @@ class PoTokenWebView private constructor(
 ) {
     private val webView = WebView(context)
     private val poTokenContinuations = mutableMapOf<String, Continuation<String>>()
-    private val exceptionHandler = CoroutineExceptionHandler { context, exception ->
+    private val exceptionHandler = CoroutineExceptionHandler { _, exception ->
         onInitializationError(exception)
     }
     private lateinit var expirationInstant: Instant

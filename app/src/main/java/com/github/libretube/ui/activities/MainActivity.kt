@@ -9,6 +9,10 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.ScrollView
+import android.os.SystemClock
+import com.github.libretube.ui.dialogs.CastPairingDialog
+import android.widget.Toast
+import com.github.libretube.sender.LoungeSender
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.widget.SearchView
@@ -61,6 +65,7 @@ import com.github.libretube.util.UpdateChecker
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class MainActivity : BaseActivity() {
@@ -71,6 +76,10 @@ class MainActivity : BaseActivity() {
     private lateinit var searchItem: MenuItem
 
     private var startFragmentId = R.id.homeFragment
+
+    private var lastCastReachable = false
+    private var lastCastReachabilityTimestamp = 0L
+    private val castReachabilityStaleMs = 60_000L
 
     private val searchViewModel: SearchViewModel by viewModels()
     private val subscriptionsViewModel: SubscriptionsViewModel by viewModels()
@@ -423,6 +432,16 @@ class MainActivity : BaseActivity() {
         return super.onCreateOptionsMenu(menu)
     }
 
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val castItem = menu.findItem(R.id.action_cast)
+        val currentDevice = LoungeSender(this).currentDevice()
+        val now = SystemClock.elapsedRealtime()
+        val freshReachable = lastCastReachable && (now - lastCastReachabilityTimestamp <= castReachabilityStaleMs)
+        val connected = currentDevice != null && (freshReachable || lastCastReachabilityTimestamp == 0L)
+        castItem?.setIcon(if (connected) R.drawable.ic_cast_connected else R.drawable.ic_cast)
+        return super.onPrepareOptionsMenu(menu)
+    }
+
     /**
      * @return whether the search view focus was cleared successfully
      */
@@ -482,6 +501,62 @@ class MainActivity : BaseActivity() {
                     AboutActivity.DONATE_URL,
                     forceDefaultOpen = true
                 )
+                true
+            }
+
+            R.id.action_cast -> {
+                val sender = LoungeSender(this)
+                val devices = sender.pairedDevices()
+
+                if (devices.isEmpty()) {
+                    CastPairingDialog().show(supportFragmentManager, CastPairingDialog.REQUEST_KEY)
+                    return true
+                }
+
+                val actions = mutableListOf<Pair<String, () -> Unit>>()
+
+                sender.currentDevice()?.let { current ->
+                    actions.add(getString(R.string.cast_sender_disconnect, current.name) to {
+                        sender.clearActiveDevice()
+                        lastCastReachable = false
+                        lastCastReachabilityTimestamp = 0L
+                        invalidateMenu()
+                        Toast.makeText(this, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
+                    })
+                }
+
+                devices.forEach { device ->
+                    actions.add(getString(R.string.cast_sender_device_item, device.name) to {
+                        lifecycleScope.launch {
+                            val reachable = withContext(Dispatchers.IO) { sender.ping(device).isSuccess }
+                            lastCastReachabilityTimestamp = SystemClock.elapsedRealtime()
+                            lastCastReachable = reachable
+                            if (reachable) {
+                                sender.setActiveDevice(device)
+                                invalidateMenu()
+                                Toast.makeText(this@MainActivity, getString(R.string.cast_connected, device.name), Toast.LENGTH_SHORT).show()
+                            } else {
+                                sender.clearActiveDevice()
+                                invalidateMenu()
+                                Toast.makeText(this@MainActivity, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    })
+                }
+
+                actions.add(getString(R.string.cast_sender_pair_via_code) to {
+                    CastPairingDialog().show(supportFragmentManager, CastPairingDialog.REQUEST_KEY)
+                    invalidateMenu()
+                })
+
+                MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.cast_sender_manage)
+                    .setItems(actions.map { it.first }.toTypedArray()) { dialog, which ->
+                        actions.getOrNull(which)?.second?.invoke()
+                        dialog.dismiss()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
                 true
             }
 

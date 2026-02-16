@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
+import android.view.View
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.SwitchPreferenceCompat
@@ -12,7 +13,11 @@ import com.github.libretube.R
 import com.github.libretube.compat.PictureInPictureCompat
 import com.github.libretube.constants.PreferenceKeys
 import com.github.libretube.helpers.LocaleHelper
+import com.github.libretube.helpers.PreferenceHelper
+import com.github.libretube.sender.LoungeSender
 import com.github.libretube.ui.base.BasePreferenceFragment
+import com.github.libretube.ui.dialogs.CastPairingDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 class PlayerSettings : BasePreferenceFragment() {
 
@@ -49,6 +54,60 @@ class PlayerSettings : BasePreferenceFragment() {
         }
 
         alternativePipControls?.isVisible = pipAvailable
+
+        val castPairingPref = findPreference<Preference>(PreferenceKeys.CAST_SENDER_PAIR)
+        castPairingPref?.summary = getCastPairingSummary()
+        castPairingPref?.setOnPreferenceClickListener {
+            CastPairingDialog().show(parentFragmentManager, CastPairingDialog.REQUEST_KEY)
+            true
+        }
+
+        val castManagePref = findPreference<Preference>(PreferenceKeys.CAST_SENDER_MANAGE)
+        castManagePref?.setOnPreferenceClickListener {
+            val sender = LoungeSender(requireContext())
+            val devices = sender.pairedDevices()
+            if (devices.isEmpty()) {
+                Toast.makeText(requireContext(), R.string.cast_sender_no_devices, Toast.LENGTH_SHORT).show()
+                return@setOnPreferenceClickListener true
+            }
+
+            val labels = devices.map { it.name }.toTypedArray()
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.cast_sender_manage)
+                .setItems(labels) { dialog, which ->
+                    devices.getOrNull(which)?.let { device ->
+                        sender.removeDevice(device)
+                        // If we removed the active device, clear the active selection.
+                        sender.currentDevice()?.let { active ->
+                            if (active.screenId == device.screenId) {
+                                sender.clearActiveDevice()
+                            }
+                        }
+                        castPairingPref?.summary = getCastPairingSummary()
+                        Toast.makeText(requireContext(), getString(R.string.cast_pair_remove), Toast.LENGTH_SHORT).show()
+                    }
+                    dialog.dismiss()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            true
+        }
+
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        val castPairingPref = findPreference<Preference>(PreferenceKeys.CAST_SENDER_PAIR)
+        parentFragmentManager.setFragmentResultListener(
+            CastPairingDialog.REQUEST_KEY,
+            viewLifecycleOwner
+        ) { _, bundle ->
+            val deviceName = bundle.getString(CastPairingDialog.KEY_DEVICE_NAME)
+            castPairingPref?.summary = deviceName?.let {
+                getString(R.string.cast_connected, it)
+            } ?: getCastPairingSummary()
+        }
     }
 
     private fun setupSubtitlePref(preference: ListPreference) {
@@ -67,5 +126,11 @@ class PlayerSettings : BasePreferenceFragment() {
             Preference.SummaryProvider<ListPreference> {
                 it.entry
             }
+    }
+
+    private fun getCastPairingSummary(): String {
+        val current = LoungeSender(requireContext()).currentDevice()
+        if (current != null) return getString(R.string.cast_connected, current.name)
+        return getString(R.string.cast_sender_pair_summary)
     }
 }

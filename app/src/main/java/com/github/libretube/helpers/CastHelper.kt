@@ -1,6 +1,8 @@
 package com.github.libretube.helpers
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.media3.cast.CastPlayer
 import androidx.media3.cast.SessionAvailabilityListener
@@ -36,20 +38,34 @@ object CastHelper {
     /**
      * Get or create CastPlayer instance
      * Returns null if Cast is not available
+     * Must be called from main thread or will post to main thread
      */
     fun getCastPlayer(context: Context): CastPlayer? {
         initialize(context)
         
         if (castPlayer == null && castContext != null) {
-            try {
-                castPlayer = CastPlayer(castContext!!)
-                Log.d(TAG, "CastPlayer created")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to create CastPlayer", e)
+            // Must create CastPlayer on main thread
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                createCastPlayer()
+            } else {
+                // Post to main thread and wait
+                Handler(Looper.getMainLooper()).post {
+                    createCastPlayer()
+                }
             }
         }
         
         return castPlayer
+    }
+    
+    @Suppress("DEPRECATION")
+    private fun createCastPlayer() {
+        try {
+            castPlayer = CastPlayer(castContext!!)
+            Log.d(TAG, "CastPlayer created")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create CastPlayer", e)
+        }
     }
     
     /**
@@ -102,6 +118,7 @@ object CastHelper {
     /**
      * Set listener for Cast session availability changes
      */
+    @Suppress("DEPRECATION")
     fun setSessionAvailabilityListener(
         player: CastPlayer?,
         listener: SessionAvailabilityListener?

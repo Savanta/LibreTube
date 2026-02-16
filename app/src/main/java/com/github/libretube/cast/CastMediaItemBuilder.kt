@@ -1,6 +1,7 @@
 package com.github.libretube.cast
 
 import android.net.Uri
+import android.util.Log
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -20,10 +21,14 @@ object CastMediaItemBuilder {
      */
     fun buildFromStreams(streams: Streams, videoId: String): MediaItem {
         val streamUrl = getBestStreamUrl(streams, videoId)
+        val mimeType = getBestStreamMimeType(streams)
+        
+        Log.d("CastMediaItemBuilder", "Building Cast MediaItem: url=$streamUrl, mimeType=$mimeType")
         
         return MediaItem.Builder()
             .setUri(streamUrl)
             .setMediaId(videoId)
+            .setMimeType(mimeType)
             .setMediaMetadata(buildMetadata(streams))
             .setSubtitleConfigurations(buildSubtitles(streams))
             .build()
@@ -47,31 +52,67 @@ object CastMediaItemBuilder {
     
     /**
      * Get best stream URL for Cast
-     * Priority: HLS > DASH > highest quality video stream
+     * Priority: HLS > DASH > muxed video stream (with audio) > fallback
      */
     private fun getBestStreamUrl(streams: Streams, videoId: String): Uri {
-        // Prefer HLS for Cast (best compatibility)
-        streams.hls?.let { 
-            return ProxyHelper.unwrapUrl(it).toUri()
+        // Prefer HLS for Cast (best compatibility, includes audio+video)
+        streams.hls?.takeIf { it.isNotBlank() }?.let { 
+            val unwrapped = ProxyHelper.unwrapUrl(it)
+            Log.d("CastMediaItemBuilder", "Using HLS: unwrapped=$unwrapped")
+            return unwrapped.toUri()
         }
         
-        // Try DASH as fallback
-        streams.dash?.let {
-            return ProxyHelper.unwrapUrl(it).toUri()
+        // Try DASH as fallback (includes audio+video)
+        streams.dash?.takeIf { it.isNotBlank() }?.let {
+            val unwrapped = ProxyHelper.unwrapUrl(it)
+            Log.d("CastMediaItemBuilder", "Using DASH: unwrapped=$unwrapped")
+            return unwrapped.toUri()
         }
         
-        // Use highest quality video stream
-        val bestStream = streams.videoStreams
-            .filter { it.url != null }
-            .maxByOrNull { it.height ?: 0 }
+        // Find best muxed stream (video+audio combined)
+        // These streams have videoOnly = false or null
+        val muxedStream = streams.videoStreams
+            .filter { 
+                it.url != null && 
+                it.url!!.isNotBlank() && 
+                it.videoOnly != true  // Include false and null (muxed streams)
+            }
+            .maxByOrNull { it.height ?: it.quality?.filter { c -> c.isDigit() }?.toIntOrNull() ?: 0 }
         
-        bestStream?.let {
-            val url = it.url ?: return "https://www.youtube.com/watch?v=$videoId".toUri()
-            return ProxyHelper.unwrapUrl(url).toUri()
+        muxedStream?.let {
+            val url = it.url!!
+            val unwrapped = ProxyHelper.unwrapUrl(url)
+            Log.d("CastMediaItemBuilder", "Using muxed stream: quality=${it.quality}, videoOnly=${it.videoOnly}, unwrapped=$unwrapped")
+            return unwrapped.toUri()
         }
         
-        // Last resort: YouTube URL
+        // Last resort: YouTube URL (will work but requires internet)
+        Log.w("CastMediaItemBuilder", "No HLS/DASH/muxed stream found, using YouTube URL for $videoId")
         return "https://www.youtube.com/watch?v=$videoId".toUri()
+    }
+    
+    /**
+     * Get MIME type for best stream
+     */
+    private fun getBestStreamMimeType(streams: Streams): String? {
+        return when {
+            streams.hls?.isNotBlank() == true -> MimeTypes.APPLICATION_M3U8
+            streams.dash?.isNotBlank() == true -> MimeTypes.APPLICATION_MPD
+            streams.videoStreams.isNotEmpty() -> {
+                val muxedStreams = streams.videoStreams
+                    .filter {
+                        it.url != null &&
+                                it.url!!.isNotBlank() &&
+                                it.videoOnly != true
+                    }
+                val muxedStream = muxedStreams
+                    .maxByOrNull { it.height ?: it.quality?.filter { c -> c.isDigit() }?.toIntOrNull() ?: 0 }
+                    ?: return MimeTypes.VIDEO_MP4
+
+                muxedStream.mimeType
+            }
+            else -> MimeTypes.VIDEO_MP4
+        }
     }
     
     /**
@@ -91,7 +132,7 @@ object CastMediaItemBuilder {
      * Uses proxy if configured
      */
     private fun getArtworkUri(streams: Streams): Uri? {
-        val thumbnailUrl = streams.thumbnailUrl ?: return null
+        val thumbnailUrl = streams.thumbnailUrl
         return ProxyHelper.unwrapUrl(thumbnailUrl).toUri()
     }
     
@@ -105,7 +146,7 @@ object CastMediaItemBuilder {
                 MediaItem.SubtitleConfiguration.Builder(
                     ProxyHelper.unwrapUrl(subUrl).toUri()
                 )
-                    .setMimeType(getMimeType(subtitle.mimeType ?: ""))
+                    .setMimeType(getMimeType(subtitle.mimeType.orEmpty()))
                     .setLanguage(subtitle.code)
                     .setLabel(subtitle.name)
                     .setSelectionFlags(0) // Not auto-selected

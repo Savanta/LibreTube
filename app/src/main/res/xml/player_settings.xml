@@ -92,6 +92,18 @@
             app:key="cast_enabled"
             app:title="@string/cast" />
 
+        <Preference
+            android:icon="@drawable/ic_cast"
+            android:summary="@string/cast_sender_pair_summary"
+            app:key="cast_sender_pair"
+            app:title="@string/cast_sender_pair" />
+
+        <Preference
+            android:icon="@drawable/ic_cast"
+            android:summary="@string/cast_sender_manage_summary"
+            app:key="cast_sender_manage"
+            app:title="@string/cast_sender_manage" />
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/captions">

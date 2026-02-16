@@ -82,13 +82,15 @@
                     android:tooltipText="@string/contribute_to_dearrow"
                     android:visibility="gone"
                     app:tint="@android:color/white" />
-                <androidx.mediarouter.app.MediaRouteButton
+                <ImageButton
                     android:id="@+id/cast_button"
                     style="@style/PlayerControlTop"
                     android:layout_marginEnd="2dp"
                     android:contentDescription="@string/cast"
+                    android:src="@drawable/ic_cast"
+                    android:tooltipText="@string/cast_sender_pair"
                     android:visibility="gone"
-                    app:mediaRouteButtonTint="@android:color/white" />
+                    app:tint="@android:color/white" />
                 <ImageButton
                     android:id="@+id/sb_submit"
                     style="@style/PlayerControlTop"

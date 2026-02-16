@@ -81,6 +81,15 @@ object PreferenceKeys {
     const val BEHAVIOR_WHEN_MINIMIZED = "behavior_when_minimized"
     const val REPEAT_MODE = "repeat_mode"
     const val CAST_ENABLED = "cast_enabled"
+    const val CAST_SENDER_PAIR = "cast_sender_pair"
+    const val CAST_SENDER_SCREEN_ID = "cast_sender_screen_id"
+    const val CAST_SENDER_LOUNGE_TOKEN = "cast_sender_lounge_token"
+    const val CAST_SENDER_SCREEN_NAME = "cast_sender_screen_name"
+    const val CAST_SENDER_DEVICE_ID = "cast_sender_device_id"
+    const val CAST_SENDER_DEVICES = "cast_sender_devices"
+    const val CAST_SENDER_ACTIVE_SCREEN_ID = "cast_sender_active_screen_id"
+    const val CAST_SENDER_MANAGE = "cast_sender_manage"
+    const val CAST_SENDER_LAST_AID = "cast_sender_last_aid"
 
     // SponsorBlock
     const val SB_USER_ID = "sb_user_id"

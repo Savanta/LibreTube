@@ -24,7 +24,13 @@ open class PipedMediaServiceRepository : MediaServiceRepository {
 
     override suspend fun getStreams(videoId: String): Streams {
         return try {
-            api.getStreams(videoId)
+            api.getStreams(videoId).also {
+                runCatching {
+                    val preview = JsonHelper.json.encodeToString(Streams.serializer(), it)
+                    val body = if (preview.length > 16000) preview.take(16000) + "…<truncated>" else preview
+                    android.util.Log.d("StreamsRaw", "fromRepo videoId=$videoId bodyLen=${preview.length} body=$body")
+                }
+            }
         } catch (e: HttpException) {
             val errorMessage = e.response()?.errorBody()?.string()?.runCatching {
                 JsonHelper.json.decodeFromString<Message>(this).message

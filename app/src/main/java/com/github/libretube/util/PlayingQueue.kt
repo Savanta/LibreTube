@@ -16,6 +16,9 @@ object PlayingQueue {
     // queue is a synchronized list to be safely accessible from different coroutine threads
     private val queue = Collections.synchronizedList(mutableListOf<StreamItem>())
     private var currentStream: StreamItem? = null
+    private var lastPlaylistId: String? = null
+    private var lastParams: String? = null
+    private var lastPlayerParams: String? = null
 
     private val queueJobs = mutableListOf<Job>()
 
@@ -43,6 +46,9 @@ object PlayingQueue {
         clearJobs()
         queue.clear()
         currentStream = null
+        lastPlaylistId = null
+        lastParams = null
+        lastPlayerParams = null
     }
 
     /**
@@ -53,7 +59,7 @@ object PlayingQueue {
     fun clearAfterCurrent() {
         clearJobs()
         synchronized(queue) {
-            val newQueue = queue.filterIndexed { index, item -> index <= currentIndex() }
+            val newQueue = queue.filterIndexed { index, _ -> index <= currentIndex() }
             setStreams(newQueue)
         }
     }
@@ -74,6 +80,17 @@ object PlayingQueue {
         if (currentStream == streamItem) return
         if (queue.contains(streamItem)) queue.remove(streamItem)
         queue.add(currentIndex() + 1, streamItem)
+    }
+
+    fun updateMetadata(
+        playlistId: String? = null,
+        listId: String? = null,
+        params: String? = null,
+        playerParams: String? = null
+    ) {
+        lastPlaylistId = playlistId ?: listId ?: lastPlaylistId
+        lastParams = params ?: lastParams
+        lastPlayerParams = playerParams ?: lastPlayerParams
     }
 
     // return the next item, or if repeating enabled and no video left, the first one of the queue
@@ -224,9 +241,13 @@ object PlayingQueue {
         streamItem: StreamItem,
         playlistId: String?,
         channelId: String?,
-        relatedStreams: List<StreamItem> = emptyList()
+        relatedStreams: List<StreamItem> = emptyList(),
+        listId: String? = null,
+        params: String? = null,
+        playerParams: String? = null
     ) {
         updateCurrent(streamItem)
+        updateMetadata(playlistId, listId, params, playerParams)
 
         if (playlistId != null) {
             insertPlaylist(playlistId, streamItem)
@@ -236,6 +257,10 @@ object PlayingQueue {
             insertRelatedStreams(relatedStreams)
         }
     }
+
+    fun currentPlaylistId(): String? = lastPlaylistId
+    fun currentParams(): String? = lastParams
+    fun currentPlayerParams(): String? = lastPlayerParams
 
     fun insertRelatedStreams(streams: List<StreamItem>) {
         if (!PlayerHelper.autoInsertRelatedVideos) return

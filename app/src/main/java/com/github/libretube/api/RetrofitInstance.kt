@@ -1,10 +1,12 @@
 package com.github.libretube.api
 
+import android.util.Log
 import com.github.libretube.BuildConfig
 import com.github.libretube.constants.PreferenceKeys
 import com.github.libretube.helpers.PreferenceHelper
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -50,6 +52,22 @@ object RetrofitInstance {
             }
 
             httpClient.addInterceptor(loggingInterceptor)
+
+            httpClient.addInterceptor { chain ->
+                val request = chain.request()
+                val response = chain.proceed(request)
+
+                if (!request.url.encodedPath.startsWith("/streams/")) return@addInterceptor response
+
+                val bodyString = response.body?.string().orEmpty()
+                val preview = if (bodyString.length > 16000) bodyString.take(16000) + "…<truncated>" else bodyString
+                Log.d("StreamsRaw", "${request.url} len=${bodyString.length} body=${preview}")
+
+                val contentType = response.body?.contentType()
+                return@addInterceptor response.newBuilder()
+                    .body(bodyString.toResponseBody(contentType))
+                    .build()
+            }
         }
 
         return httpClient.build()

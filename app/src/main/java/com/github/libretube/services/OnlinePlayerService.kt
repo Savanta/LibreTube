@@ -85,11 +85,17 @@ open class OnlinePlayerService : AbstractPlayerService() {
     
     private val castSessionListener = object : SessionAvailabilityListener {
         override fun onCastSessionAvailable() {
-            switchToCastPlayer()
+            // Only auto-switch if we have streams and are not already casting
+            // This prevents automatic reconnection when returning to app
+            if (!isCasting && streams != null && exoPlayer?.playbackState != Player.STATE_IDLE) {
+                switchToCastPlayer()
+            }
         }
         
         override fun onCastSessionUnavailable() {
-            switchToLocalPlayer()
+            if (isCasting) {
+                switchToLocalPlayer()
+            }
         }
     }
     private var fetchVideoInfoJob: Job? = null
@@ -140,7 +146,6 @@ open class OnlinePlayerService : AbstractPlayerService() {
         try {
             // Save current state
             val currentPosition = exoPlayer?.currentPosition ?: 0L
-            val isPlaying = exoPlayer?.isPlaying ?: false
             
             // Initialize CastPlayer if needed
             if (castPlayer == null) {
@@ -156,20 +161,23 @@ open class OnlinePlayerService : AbstractPlayerService() {
             
             // Setup Cast playback
             castPlayer?.let { player ->
-                player.setMediaItem(mediaItem)
+                // Set MediaItem with start position
+                player.setMediaItem(mediaItem, currentPosition)
                 player.prepare()
-                player.seekTo(currentPosition)
-                if (isPlaying) player.play()
                 
-                // Sync playing queue to Cast
-                syncPlayingQueueToCast()
+                // Always start playback on Cast
+                player.playWhenReady = true
+                player.play()
                 
                 isCasting = true
                 
                 // Pause local player
                 exoPlayer?.pause()
                 
-                Log.d(TAG(), "Switched to Cast playback")
+                // DO NOT update session - Cast SDK manages its own media session
+                // updateSessionPlayer(player) would destroy our session
+                
+                Log.d(TAG(), "Switched to Cast playback at ${currentPosition}ms")
                 toastFromMainThread(getString(R.string.cast_connected, 
                     CastHelper.getConnectedDeviceName() ?: "TV"))
             }
@@ -194,10 +202,16 @@ open class OnlinePlayerService : AbstractPlayerService() {
             exoPlayer?.seekTo(currentPosition)
             if (isPlaying) exoPlayer?.play()
             
-            // Stop Cast
+            // Stop and clear Cast
             castPlayer?.stop()
+            castPlayer?.removeListener(playerListener)
+            CastHelper.setSessionAvailabilityListener(castPlayer, null)
+            castPlayer = null
             
             isCasting = false
+            
+            // Switch media session back to local player for controls
+            exoPlayer?.let { updateSessionPlayer(it) }
             
             Log.d(TAG(), "Switched to local playback")
             toastFromMainThread(getString(R.string.cast_disconnected))
@@ -257,6 +271,16 @@ open class OnlinePlayerService : AbstractPlayerService() {
         }
         isAudioOnlyPlayer = args.getBoolean(IntentData.audioOnly)
 
+        // If changing videos while casting, switch back to local first
+        try {
+            if (isCasting && videoId != playerData.videoId) {
+                Log.d(TAG(), "Switching to new video, disconnecting Cast")
+                switchToLocalPlayer()
+            }
+        } catch (e: UninitializedPropertyAccessException) {
+            // videoId not initialized yet, first run
+        }
+
         // get the intent arguments
         videoId = playerData.videoId
         playlistId = playerData.playlistId
@@ -270,16 +294,18 @@ open class OnlinePlayerService : AbstractPlayerService() {
             setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, isAudioOnlyPlayer)
         }
         
-        // Initialize Cast if available
+        // Initialize Cast if available (must be on main thread)
         try {
-            castPlayer = CastHelper.getCastPlayer(this)
-            castPlayer?.let { player ->
-                player.addListener(playerListener)
-                CastHelper.setSessionAvailabilityListener(player, castSessionListener)
-                
-                // If already connected to Cast, switch immediately
-                if (CastHelper.isCastSessionAvailable()) {
-                    switchToCastPlayer()
+            withContext(Dispatchers.Main) {
+                castPlayer = CastHelper.getCastPlayer(this@OnlinePlayerService)
+                castPlayer?.let { player ->
+                    player.addListener(playerListener)
+                    CastHelper.setSessionAvailabilityListener(player, castSessionListener)
+                    
+                    // If already connected to Cast, switch immediately
+                    if (CastHelper.isCastSessionAvailable()) {
+                        switchToCastPlayer()
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -303,6 +329,8 @@ open class OnlinePlayerService : AbstractPlayerService() {
                 try {
                     MediaServiceRepository.instance.getStreams(videoId).let {
                         DeArrowUtil.deArrowStreams(it, videoId)
+                    }.also {
+                        Log.d(TAG(), "StreamsFields videoId=$videoId listId=${it.listId} params=${it.params} playerParams=${it.playerParams}")
                     }
                 }  catch (e: Exception) {
                     Log.e(TAG(), e.stackTraceToString())
@@ -315,8 +343,28 @@ open class OnlinePlayerService : AbstractPlayerService() {
                 // save the current stream to the queue
                 PlayingQueue.updateCurrent(it)
 
+                // Keep lounge metadata (playlistId/params/playerParams) fresh even when the queue already exists
+                // Prefer stream-sourced lounge metadata, but fall back to the playlist id when
+                // the backend omits listId (common for Piped /streams responses).
+                val resolvedListId = streams?.listId ?: playlistId
+
+                PlayingQueue.updateMetadata(
+                    playlistId = playlistId,
+                    listId = resolvedListId,
+                    params = streams?.params,
+                    playerParams = streams?.playerParams
+                )
+
                 if (!PlayingQueue.hasNext()) {
-                    PlayingQueue.updateQueue(it, playlistId, channelId, streams!!.relatedStreams)
+                    PlayingQueue.updateQueue(
+                        streamItem = it,
+                        playlistId = playlistId,
+                        channelId = channelId,
+                        relatedStreams = streams!!.relatedStreams,
+                        listId = resolvedListId,
+                        params = streams?.params,
+                        playerParams = streams?.playerParams
+                    )
                 }
 
                 // update feed item with newer information, e.g. more up-to-date views

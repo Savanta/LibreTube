@@ -20,9 +20,9 @@ class InstancesModel : ViewModel() {
 
     val publicInstances = MutableStateFlow<List<PipedInstance>>(emptyList())
     val instances = combine(publicInstances, customInstances) { publicInstances, customInstances ->
-        val customInstances = customInstances.map { PipedInstance(it.name, it.apiUrl) }
+        val userInstances = customInstances.map { PipedInstance(it.name, it.apiUrl) }
 
-        publicInstances.plus(customInstances).toMutableList()
+        publicInstances.plus(userInstances).toMutableList()
     }
 
     private val instancesRepo = InstanceRepository()

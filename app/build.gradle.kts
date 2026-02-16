@@ -163,12 +163,16 @@ dependencies {
     /* Retrofit and Kotlinx Serialization */
     implementation(libs.square.retrofit)
     implementation(libs.logging.interceptor)
+    implementation("com.squareup.okhttp3:okhttp-urlconnection:4.12.0")
     implementation(libs.kotlinx.serialization)
     implementation(libs.kotlinx.datetime)
     implementation(libs.converter.kotlinx.serialization)
 
     /* NewPipe Extractor */
-    implementation(libs.newpipeextractor)
+    implementation(libs.newpipeextractor) {
+        exclude(group = "com.github.TeamNewPipe", module = "nanojson")
+    }
+    implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
 
 
     /* Coil */
