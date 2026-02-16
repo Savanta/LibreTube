@@ -58,7 +58,6 @@
 -keepattributes RuntimeVisibleAnnotations,AnnotationDefault
 
 # -- Retrofit keep rules, obtained from https://github.com/square/retrofit/blob/master/retrofit/src/main/resources/META-INF/proguard/retrofit2.pro
-
 # Retrofit does reflection on generic parameters. InnerClasses is required to use Signature and
 # EnclosingMethod is required to use InnerClasses.
 -keepattributes Signature, InnerClasses, EnclosingMethod
@@ -136,3 +135,6 @@
 -dontwarn java.beans.IntrospectionException
 -dontwarn java.beans.Introspector
 -dontwarn java.beans.PropertyDescriptor
+
+# OkHttp internal
+-dontwarn okhttp3.internal.Util

@@ -123,10 +123,7 @@ abstract class CustomExoPlayerView(
     private var loungeIsPlaying = false
     private var loungePositionMs: Long = 0L
     private var loungeLastRealtimeMs: Long = 0L
-    private var loungeHeartbeatJob: Job? = null
-    private var loungePingJob: Job? = null
     private var loungeSeekGuardJob: Job? = null
-    private var loungeReachabilityJob: Job? = null
     private var loungeDeviceReachable: Boolean = false
     private var loungeReachabilityLastCheck: Long = 0L
     private var loungeReachabilityLastSuccess: Long = 0L
@@ -139,6 +136,7 @@ abstract class CustomExoPlayerView(
     private var loungeRemoteDriveUntilMs: Long = 0L
     private var loungeLastTransitionSignature: String? = null
     private var loungeLastTransitionMs: Long = 0L
+    private val loungeSessionController by lazy { LoungeSessionController(loungeSender) }
 
     /**
      * Objects from the parent fragment
@@ -885,119 +883,39 @@ abstract class CustomExoPlayerView(
     }
 
     private fun startLoungeHeartbeat(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (loungeHeartbeatJob?.isActive == true) return
-        stopLoungeHeartbeat()
-        loungeHeartbeatJob = lifecycleOwner.lifecycleScope.launch {
-            Log.d("LoungeSender", "start heartbeat")
-            val streamResult = loungeSender.streamNowPlaying { status ->
-                updateLoungeNowPlaying(status)
-            }
-
-            if (streamResult.isFailure) {
-                Log.w("LoungeSender", "RPC stream failed, dropping lounge session", streamResult.exceptionOrNull())
-                onLoungeConnectionLost()
-            }
-        }
-
-        loungePingJob = lifecycleOwner.lifecycleScope.launch {
-            var backoffMs = LOUNGE_ACTIVE_PING_INTERVAL_MS
-            var consecutiveFailures = 0
-            while (isActive) {
-                delay(backoffMs)
-                if (!isLoungeCasting) continue
-
-                val now = SystemClock.elapsedRealtime()
-                val staleMs = now - loungeLastRealtimeMs
-                val paused = !loungeIsPlaying
-                val shouldPing = if (paused) {
-                    now - loungeReachabilityLastSuccess >= LOUNGE_PAUSED_PING_INTERVAL_MS
-                } else {
-                    staleMs > LOUNGE_ACTIVE_STALE_MS
-                }
-
-                if (!shouldPing) {
-                    backoffMs = if (paused) LOUNGE_PAUSED_PING_INTERVAL_MS else LOUNGE_ACTIVE_PING_INTERVAL_MS
-                    if (!paused) consecutiveFailures = 0
-                    continue
-                }
-
-                val pingStart = SystemClock.elapsedRealtime()
-                Log.d("LoungeSender", "playback ping paused=$paused staleMs=$staleMs")
-                val result = withContext(Dispatchers.IO) { loungeSender.ping() }
-                loungeReachabilityLastCheck = now
-                val status = result.getOrNull()
-                val elapsedMs = SystemClock.elapsedRealtime() - pingStart
-                if (result.isSuccess) {
-                    Log.d(
-                        "LoungeSender",
-                        "ping ok in ${elapsedMs}ms paused=$paused staleMs=$staleMs status=${status != null}"
-                    )
-                    consecutiveFailures = 0
-                    loungeDeviceReachable = true
-                    loungeReachabilityLastSuccess = SystemClock.elapsedRealtime()
+        loungeSessionController.startHeartbeat(
+            scope = lifecycleOwner.lifecycleScope,
+            isPaused = { !loungeIsPlaying },
+            lastRealtimeMs = { loungeLastRealtimeMs },
+            onNowPlaying = { status -> updateLoungeNowPlaying(status) },
+            onPingResult = { reachable, status ->
+                loungeDeviceReachable = reachable
+                loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
+                if (reachable) {
+                    loungeReachabilityLastSuccess = loungeReachabilityLastCheck
                     status?.let { updateLoungeNowPlaying(it) }
-                    backoffMs = if (paused) LOUNGE_PAUSED_PING_INTERVAL_MS else LOUNGE_ACTIVE_PING_INTERVAL_MS
-                } else {
-                    loungeDeviceReachable = false
-                    consecutiveFailures++
-                    Log.w(
-                        "LoungeSender",
-                        "ping fail #$consecutiveFailures in ${elapsedMs}ms paused=$paused staleMs=$staleMs err=${result.exceptionOrNull()?.javaClass?.simpleName}:${result.exceptionOrNull()?.message}"
-                    )
-                    updateCastIcon()
-                    (context as? MainActivity)?.invalidateMenu()
-                    backoffMs = (backoffMs * 2).coerceAtMost(LOUNGE_MAX_PING_INTERVAL_MS)
-                    if (consecutiveFailures >= LOUNGE_PING_FAILURE_LIMIT) {
-                        Log.w("LoungeSender", "ping failed $consecutiveFailures times, dropping lounge session")
-                        onLoungeConnectionLost()
-                        break
-                    }
                 }
-            }
-        }
+                updateCastIcon()
+                (context as? MainActivity)?.invalidateMenu()
+            },
+            onConnectionLost = { onLoungeConnectionLost() }
+        )
     }
 
     private fun stopLoungeHeartbeat() {
-        loungePingJob?.cancel()
-        loungePingJob = null
         loungeSeekGuardJob?.cancel()
         loungeSeekGuardJob = null
-        loungeReachabilityJob?.cancel()
-        loungeReachabilityJob = null
-        loungeHeartbeatJob?.let { job ->
-            job.invokeOnCompletion { cause ->
-                Log.w("LoungeSender", "stop heartbeat completion cancelled=${job.isCancelled} cause=${cause?.message}")
-            }
-            Log.w("LoungeSender", "stop heartbeat requested cancelled=${job.isCancelled}")
-            job.cancel()
-        }
-        loungeHeartbeatJob = null
+        loungeSessionController.stopHeartbeat()
+        loungeSessionController.stopReachability()
     }
 
     private fun onLoungeConnectionLost() {
         stopLoungeHeartbeat()
-        loungeSender.clearActiveDevice()
-        isLoungeCasting = false
-        loungeIsPlaying = false
-        loungePositionMs = 0L
-        loungeDeviceReachable = false
-        loungeReachabilityLastSuccess = 0L
-        lastAutoCastVideoId = null
-        loungeLastSyncSignature = null
-        loungeLastSyncMs = 0L
-        loungeRemoteDriveUntilMs = 0L
-        loungeLastTransitionSignature = null
-        loungeLastTransitionMs = 0L
-        updateLoungeArtwork(null)
-        player?.play()
-        player?.let { binding.playPauseBTN.setImageResource(PlayerHelper.getPlayPauseActionIcon(it)) }
-        keepScreenOn = player?.isPlaying == true
-        attachProgressToPlayer()
-        updateCastIcon()
-        Toast.makeText(context, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
+        resetLoungeSession(clearActiveDevice = true)
     }
 
     private fun detachProgressFromPlayer() {
+        binding.exoProgress.setPlayer(null)
         // Align the local player's position to the lounge clock to avoid UI jumps without detaching controls.
         player?.seekTo(loungePositionMs)
     }
@@ -1433,46 +1351,47 @@ abstract class CustomExoPlayerView(
 
         lifecycleOwner.lifecycleScope.launch {
             val preStatus = withContext(Dispatchers.IO) { sender.ping(pairedDevice).getOrNull() }
-            val shouldBacksync = !isLoungeCasting && preStatus?.videoId != null
+            val remoteVideoId = preStatus?.videoId
+            val shouldBacksync = !isLoungeCasting && remoteVideoId != null
             if (shouldBacksync) {
-                preStatus?.let { status ->
-                    Log.d(
-                        "LoungeSender",
-                        "backsync remote playback videoId=${status.videoId} index=${status.currentIndex} pos=${status.currentTimeMs}"
-                    )
-                    status.currentTimeMs?.let {
-                        loungePositionMs = it
-                        loungeLastRealtimeMs = SystemClock.elapsedRealtime()
-                    }
-                    status.isPlaying?.let { loungeIsPlaying = it }
-                    status.videoId?.let { lastLoungeVideoId = it }
-                    lastLoungeIndex = status.currentIndex ?: lastLoungeIndex
-                    loungeDeviceReachable = true
-                    loungeReachabilityLastSuccess = SystemClock.elapsedRealtime()
-                    isLoungeCasting = true
-                    updateLoungeNowPlaying(status)
-                    detachProgressFromPlayer()
-                    updateLoungeArtwork(PlayingQueue.getCurrent())
-                    player?.pause()
-                    binding.playPauseBTN.setImageResource(if (loungeIsPlaying) R.drawable.ic_pause else R.drawable.ic_play)
-                    updateCastIcon()
-                    (context as? MainActivity)?.invalidateMenu()
-                    loungeRemoteDriveUntilMs = SystemClock.elapsedRealtime() + 3_500
-                    val queueSignature = buildLoungeQueueSignature(
-                        status.videoId ?: videoId,
-                        status.currentIndex ?: currentIndex,
-                        status.videoIds ?: queueIds,
-                        listId,
-                        params,
-                        playerParams
-                    )
-                    loungeLastSyncSignature = queueSignature
-                    loungeLastSyncMs = SystemClock.elapsedRealtime()
-                    pinControllerForCasting()
-                    startLoungeHeartbeat(lifecycleOwner)
-                    Toast.makeText(context, R.string.cast_connected, Toast.LENGTH_SHORT).show()
-                    return@launch
+                val status = preStatus
+                val videoIdNonNull = remoteVideoId
+                Log.d(
+                    "LoungeSender",
+                    "backsync remote playback videoId=$videoIdNonNull index=${status.currentIndex} pos=${status.currentTimeMs}"
+                )
+                status.currentTimeMs?.let {
+                    loungePositionMs = it
+                    loungeLastRealtimeMs = SystemClock.elapsedRealtime()
                 }
+                status.isPlaying?.let { loungeIsPlaying = it }
+                lastLoungeVideoId = videoIdNonNull
+                lastLoungeIndex = status.currentIndex ?: lastLoungeIndex
+                loungeDeviceReachable = true
+                loungeReachabilityLastSuccess = SystemClock.elapsedRealtime()
+                isLoungeCasting = true
+                updateLoungeNowPlaying(status)
+                detachProgressFromPlayer()
+                updateLoungeArtwork(PlayingQueue.getCurrent())
+                player?.pause()
+                binding.playPauseBTN.setImageResource(if (loungeIsPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+                updateCastIcon()
+                (context as? MainActivity)?.invalidateMenu()
+                loungeRemoteDriveUntilMs = SystemClock.elapsedRealtime() + 3_500
+                val queueSignature = buildLoungeQueueSignature(
+                    videoIdNonNull,
+                    status.currentIndex ?: currentIndex,
+                    status.videoIds ?: queueIds,
+                    listId,
+                    params,
+                    playerParams
+                )
+                loungeLastSyncSignature = queueSignature
+                loungeLastSyncMs = SystemClock.elapsedRealtime()
+                pinControllerForCasting()
+                startLoungeHeartbeat(lifecycleOwner)
+                Toast.makeText(context, R.string.cast_connected, Toast.LENGTH_SHORT).show()
+                return@launch
             }
 
             Log.d("LoungeSender", "sendCurrentToLounge videoId=$videoId position=$position device=${pairedDevice.screenId}")
@@ -1526,11 +1445,21 @@ abstract class CustomExoPlayerView(
         }
 
         stopLoungeHeartbeat()
+        resetLoungeSession(clearActiveDevice = false)
+    }
+
+    private fun resetLoungeSession(
+        clearActiveDevice: Boolean = true,
+        resumeLocalPlayback: Boolean = true,
+        toastResId: Int? = R.string.cast_disconnected
+    ) {
+        if (clearActiveDevice) loungeSender.clearActiveDevice()
 
         isLoungeCasting = false
         loungeIsPlaying = false
         loungePositionMs = 0L
         loungeDeviceReachable = false
+        loungeReachabilityLastCheck = 0L
         loungeReachabilityLastSuccess = 0L
         lastAutoCastVideoId = null
         loungeLastSyncSignature = null
@@ -1538,14 +1467,21 @@ abstract class CustomExoPlayerView(
         loungeRemoteDriveUntilMs = 0L
         loungeLastTransitionSignature = null
         loungeLastTransitionMs = 0L
+
         updateLoungeArtwork(null)
-        player?.play()
+
+        if (resumeLocalPlayback) {
+            player?.play()
+        }
         player?.let { binding.playPauseBTN.setImageResource(PlayerHelper.getPlayPauseActionIcon(it)) }
         keepScreenOn = player?.isPlaying == true
         attachProgressToPlayer()
         updateCastIcon()
         (context as? MainActivity)?.invalidateMenu()
-        Toast.makeText(context, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
+
+        toastResId?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+
+        findViewTreeLifecycleOwner()?.let { startLoungeReachabilityPing(it) }
     }
 
     private fun pinControllerForCasting() {
@@ -1565,24 +1501,6 @@ abstract class CustomExoPlayerView(
         ImageViewCompat.setImageTintList(binding.castButton, ColorStateList.valueOf(tintColor))
         binding.castButton.contentDescription = context.getString(if (connected) R.string.cast_connected else R.string.cast)
         (context as? MainActivity)?.invalidateMenu()
-    }
-
-    private fun buildLoungeQueueSignature(
-        videoId: String,
-        currentIndex: Int,
-        queueIds: List<String>,
-        listId: String?,
-        params: String?,
-        playerParams: String?
-    ): String {
-        return listOf(
-            videoId,
-            currentIndex.toString(),
-            queueIds.joinToString("|"),
-            listId.orEmpty(),
-            params.orEmpty(),
-            playerParams.orEmpty()
-        ).joinToString("#")
     }
 
     private suspend fun syncLoungePlaylist(positionMs: Long? = null, reason: String) {
@@ -1793,54 +1711,38 @@ abstract class CustomExoPlayerView(
     }
 
     private fun startLoungeReachabilityPing(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (loungeReachabilityJob?.isActive == true) return
-        loungeReachabilityJob = lifecycleOwner.lifecycleScope.launch {
-            var consecutiveFailures = 0
-            while (isActive) {
-                val device = loungeSender.currentDevice()
-                if (device == null) {
-                    loungeDeviceReachable = false
-                    loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
-                    loungeReachabilityLastSuccess = 0L
-                    consecutiveFailures = 0
-                    updateCastIcon()
+        loungeSessionController.startReachability(
+            lifecycleOwner.lifecycleScope,
+            onReachabilityUpdate = { reachable, status ->
+                loungeDeviceReachable = reachable
+                loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
+                if (reachable) {
+                    loungeReachabilityLastSuccess = loungeReachabilityLastCheck
                 } else {
-                    val pingResult = withContext(Dispatchers.IO) { loungeSender.ping() }
-                    val status = pingResult.getOrNull()
-                    loungeDeviceReachable = pingResult.isSuccess
-                    loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
-                    if (pingResult.isSuccess) {
-                        consecutiveFailures = 0
-                        loungeReachabilityLastSuccess = loungeReachabilityLastCheck
-                        // If we are not currently casting but the receiver is already playing something, surface its state.
-                        if (!isLoungeCasting && status?.videoId != null) {
-                            Log.d(
-                                "LoungeSender",
-                                "reachability nowPlaying videoId=${status.videoId} index=${status.currentIndex} queue=${status.videoIds?.size ?: 0}"
-                            )
-                            updateLoungeNowPlaying(status)
-                        }
-                        updateCastIcon()
-                        (context as? MainActivity)?.invalidateMenu()
-                    } else {
-                        consecutiveFailures++
-                        lastAutoCastVideoId = null
-                        if (consecutiveFailures >= 3) {
-                            loungeSender.clearActiveDevice()
-                            loungeDeviceReachable = false
-                            loungeReachabilityLastSuccess = 0L
-                            updateCastIcon()
-                            (context as? MainActivity)?.invalidateMenu()
-                        }
-                    }
+                    loungeReachabilityLastSuccess = 0L
+                    lastAutoCastVideoId = null
                 }
-                if (!loungeDeviceReachable) {
-                    updateCastIcon()
-                    (context as? MainActivity)?.invalidateMenu()
+
+                // If we are not currently casting but the receiver is already playing something, surface its state.
+                if (!isLoungeCasting && status?.videoId != null) {
+                    Log.d(
+                        "LoungeSender",
+                        "reachability nowPlaying videoId=${status.videoId} index=${status.currentIndex} queue=${status.videoIds?.size ?: 0}"
+                    )
+                    updateLoungeNowPlaying(status)
                 }
-                delay(15_000)
+
+                updateCastIcon()
+                (context as? MainActivity)?.invalidateMenu()
+            },
+            onDeviceCleared = {
+                loungeDeviceReachable = false
+                loungeReachabilityLastSuccess = 0L
+                lastAutoCastVideoId = null
+                updateCastIcon()
+                (context as? MainActivity)?.invalidateMenu()
             }
-        }
+        )
     }
 
     open fun onPlaybackEvents(player: Player, events: Player.Events) {
@@ -1891,10 +1793,5 @@ abstract class CustomExoPlayerView(
         private val LANDSCAPE_MARGIN_HORIZONTAL = 20f.dpToPx()
         private val LANDSCAPE_MARGIN_HORIZONTAL_NONE = 0f.dpToPx()
         private const val LOUNGE_REACHABILITY_STALE_MS = 45_000L
-        private const val LOUNGE_ACTIVE_STALE_MS = 7_000L
-        private const val LOUNGE_ACTIVE_PING_INTERVAL_MS = 7_000L
-        private const val LOUNGE_PAUSED_PING_INTERVAL_MS = 18_000L
-        private const val LOUNGE_MAX_PING_INTERVAL_MS = 14_000L
-        private const val LOUNGE_PING_FAILURE_LIMIT = 5
     }
 }

@@ -146,7 +146,7 @@ open class DismissableTimeBar(
         listeners.remove(listener)
     }
 
-    fun setPlayer(player: Player) {
+    fun setPlayer(player: Player?) {
         this.exoPlayer = player
     }
 
