@@ -31,7 +31,6 @@ import com.github.libretube.ui.dialogs.ShareDialog.Companion.YOUTUBE_FRONTEND_UR
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
-import kotlinx.datetime.toKotlinInstant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import com.grack.nanojson.JsonArray
@@ -63,6 +62,8 @@ import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.RACY_C
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.VIDEO_ID
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getJsonPostResponse
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.prepareDesktopJsonBuilder
+import kotlin.time.toKotlinInstant
+import kotlin.time.toKotlinInstant
 
 
 private fun VideoStream.toPipedStream() = PipedStream(

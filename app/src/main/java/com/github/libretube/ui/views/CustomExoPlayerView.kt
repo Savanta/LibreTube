@@ -1161,7 +1161,7 @@ abstract class CustomExoPlayerView(
     }
 
     override fun onLongPress() {
-        if (!PlayerHelper.swipeGestureEnabled) return
+        if (!PlayerHelper.doubleTapToSeek) return
 
         backgroundBinding.fastForwardView.isVisible = true
         val player = player ?: return
@@ -1183,7 +1183,7 @@ abstract class CustomExoPlayerView(
     }
 
     override fun onLongPressEnd() {
-        if (!PlayerHelper.swipeGestureEnabled) return
+        if (!PlayerHelper.doubleTapToSeek) return
 
         backgroundBinding.fastForwardView.isGone = true
 
