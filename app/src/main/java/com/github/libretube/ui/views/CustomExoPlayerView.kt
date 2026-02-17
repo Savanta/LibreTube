@@ -12,7 +12,9 @@ import android.os.SystemClock
 import android.text.format.DateUtils
 import android.util.AttributeSet
 import android.util.Log
+import android.util.TypedValue
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.Window
 import android.widget.FrameLayout
@@ -31,6 +33,7 @@ import androidx.core.view.marginStart
 import androidx.core.view.updateLayoutParams
 import androidx.core.widget.ImageViewCompat
 import androidx.fragment.app.findFragment
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -47,8 +50,10 @@ import com.github.libretube.R
 import com.github.libretube.constants.IntentData
 import com.github.libretube.constants.PreferenceKeys
 import com.github.libretube.databinding.CustomExoPlayerViewTemplateBinding
+import com.github.libretube.databinding.DialogCastDevicesBinding
 import com.github.libretube.databinding.DoubleTapOverlayBinding
 import com.github.libretube.databinding.ExoStyledPlayerControlViewBinding
+import com.github.libretube.databinding.ItemCastDeviceBinding
 import com.github.libretube.databinding.PlayerGestureControlsViewBinding
 import com.github.libretube.extensions.dpToPx
 import com.github.libretube.extensions.navigateVideo
@@ -62,8 +67,10 @@ import com.github.libretube.helpers.AudioHelper
 import com.github.libretube.helpers.BrightnessHelper
 import com.github.libretube.helpers.ImageHelper
 import com.github.libretube.helpers.PlayerHelper
+import com.github.libretube.api.obj.StreamItem
+import com.github.libretube.sender.LoungeDevice
 import com.github.libretube.sender.NowPlayingStatus
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.color.MaterialColors
 import com.github.libretube.helpers.PreferenceHelper
 import com.github.libretube.helpers.WindowHelper
@@ -136,6 +143,12 @@ abstract class CustomExoPlayerView(
     private var loungeRemoteDriveUntilMs: Long = 0L
     private var loungeLastTransitionSignature: String? = null
     private var loungeLastTransitionMs: Long = 0L
+    private var lastLoungeCaptionTrackId: String? = PreferenceHelper
+        .getString(PREF_LAUNCH_LAST_CAPTION_TRACK, "")
+        .takeIf { it.isNotBlank() }
+    private var lastLoungeAudioTrackId: String? = PreferenceHelper
+        .getString(PREF_LAUNCH_LAST_AUDIO_TRACK, "")
+        .takeIf { it.isNotBlank() }
     private val loungeSessionController by lazy { LoungeSessionController(loungeSender) }
 
     /**
@@ -357,7 +370,15 @@ abstract class CustomExoPlayerView(
             )
         }
         binding.queueToggle.setOnClickListener {
-            PlayingQueueSheet().show(supportFragmentManager, null)
+            val sheet = PlayingQueueSheet()
+            sheet.onQueueEdited = {
+                if (isLoungeCasting) {
+                    findViewTreeLifecycleOwner()?.lifecycleScope?.launch {
+                        syncLoungePlaylist(reason = "queue_edit")
+                    }
+                }
+            }
+            sheet.show(supportFragmentManager, null)
         }
 
         updateMarginsByFullscreenMode()
@@ -940,6 +961,40 @@ abstract class CustomExoPlayerView(
         keepScreenOn = loungeIsPlaying
     }
 
+    /**
+     * Rehydrate the casting UI when we reconnect to an active lounge session (e.g., returning to the player).
+     */
+    private fun adoptLoungeStatus(status: NowPlayingStatus) {
+        if (isLoungeCasting) return
+
+        handleRemoteLoungeQueue(status)
+
+        status.currentTimeMs?.let {
+            loungePositionMs = it
+            loungeLastRealtimeMs = SystemClock.elapsedRealtime()
+            player?.seekTo(it)
+        }
+        loungeIsPlaying = status.isPlaying ?: false
+        status.videoId?.let { lastLoungeVideoId = it }
+        status.currentIndex?.let { lastLoungeIndex = it }
+
+        isLoungeCasting = true
+        lastLoungeCaptionTrackId = null
+        lastLoungeAudioTrackId = null
+        loungeDeviceReachable = true
+        loungeReachabilityLastSuccess = SystemClock.elapsedRealtime()
+
+        detachProgressFromPlayer()
+        updateLoungeArtwork(PlayingQueue.getCurrent())
+        player?.pause()
+        binding.playPauseBTN.setImageResource(if (loungeIsPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+        keepScreenOn = loungeIsPlaying
+        updateCastIcon()
+        (context as? MainActivity)?.invalidateMenu()
+        findViewTreeLifecycleOwner()?.let { startLoungeHeartbeat(it) }
+        pinControllerForCasting()
+    }
+
     private fun handleRemoteLoungeQueue(status: NowPlayingStatus) {
         val remoteVideoId = status.videoId ?: return
         if (isApplyingRemoteLoungeState) return
@@ -961,6 +1016,14 @@ abstract class CustomExoPlayerView(
                         ?: reordered.firstOrNull()
                     newCurrent?.let { PlayingQueue.updateCurrent(it) }
                 }
+            }
+
+            // If receiver reports playback we don't know, create a minimal stream locally to keep UI/artwork in sync.
+            val hasRemoteInQueue = PlayingQueue.getStreams().any { it.url?.toID() == remoteVideoId }
+            if ((remoteQueueIds == null || remoteQueueIds.isEmpty()) && !hasRemoteInQueue) {
+                val minimal = buildMinimalStreamItem(remoteVideoId, status.durationMs)
+                PlayingQueue.setStreams(listOf(minimal))
+                PlayingQueue.updateCurrent(minimal)
             }
 
             if (remoteVideoId != localCurrentId) {
@@ -986,6 +1049,17 @@ abstract class CustomExoPlayerView(
         } finally {
             isApplyingRemoteLoungeState = false
         }
+    }
+
+    private fun buildMinimalStreamItem(videoId: String, durationMs: Long?): StreamItem {
+        val url = "https://www.youtube.com/watch?v=$videoId"
+        val thumbnail = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+        return StreamItem(
+            url = url,
+            title = videoId,
+            thumbnail = thumbnail,
+            duration = durationMs
+        )
     }
 
     private fun updateLoungeArtwork(currentItem: com.github.libretube.api.obj.StreamItem?) {
@@ -1232,7 +1306,18 @@ abstract class CustomExoPlayerView(
         setupLoungeSenderButton()
         updateCastIcon()
 
-        findViewTreeLifecycleOwner()?.let { startLoungeReachabilityPing(it) }
+        findViewTreeLifecycleOwner()?.let { lifecycleOwner ->
+            startLoungeReachabilityPing(lifecycleOwner)
+
+            // Perform an immediate nowPlaying ping to adopt active TV playback without waiting for the periodic reachability.
+            lifecycleOwner.lifecycleScope.launch {
+                val status = withContext(Dispatchers.IO) { loungeSender.ping() }.getOrNull()
+                if (status?.videoId != null && player?.isPlaying != true && !isLoungeCasting) {
+                    adoptLoungeStatus(status)
+                    updateLoungeNowPlaying(status)
+                }
+            }
+        }
     }
 
     private fun setupLoungeSenderButton() {
@@ -1246,66 +1331,32 @@ abstract class CustomExoPlayerView(
         val sender = loungeSender
         lifecycleOwner.lifecycleScope.launch {
             startLoungeReachabilityPing(lifecycleOwner)
-            val actions = mutableListOf<Pair<String, () -> Unit>>()
             val pairedDevices = sender.pairedDevices()
             val reachability = withContext(Dispatchers.IO) {
                 pairedDevices.associateWith { device -> sender.ping(device).isSuccess }
             }
 
             val activeDevice = sender.currentDevice()
+            val sheetBinding = DialogCastDevicesBinding.inflate(LayoutInflater.from(context))
+            val dialog = BottomSheetDialog(
+                context,
+                com.google.android.material.R.style.ThemeOverlay_Material3_BottomSheetDialog
+            )
+            dialog.setContentView(sheetBinding.root)
 
-            actions.add(context.getString(R.string.cast_sender_refresh_devices) to {
+            sheetBinding.subtitle.text = if (pairedDevices.isEmpty()) {
+                context.getString(R.string.cast_sender_pair_summary)
+            } else {
+                context.getString(R.string.cast_sender_manage_summary)
+            }
+
+            sheetBinding.refreshButton.setOnClickListener {
+                dialog.dismiss()
                 showLoungeChooser()
-            })
-
-            pairedDevices.forEach { device ->
-                val reachable = reachability[device] == true
-                val status = context.getString(
-                    if (reachable) R.string.cast_sender_status_online else R.string.cast_sender_status_offline
-                )
-                val label = context.getString(R.string.cast_sender_device_item, device.name) + " \u2022 " + status
-                actions.add(label to {
-                    loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
-                    if (reachable) {
-                        loungeDeviceReachable = true
-                        loungeReachabilityLastSuccess = loungeReachabilityLastCheck
-                        sender.setActiveDevice(device)
-                        lastAutoCastVideoId = null
-                        sendCurrentToLounge(sender, device, lifecycleOwner)
-                    } else {
-                        loungeDeviceReachable = false
-                        loungeReachabilityLastSuccess = 0L
-                        Toast.makeText(context, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
-                        updateCastIcon()
-                        (context as? MainActivity)?.invalidateMenu()
-                    }
-                })
             }
 
-            if (pairedDevices.isNotEmpty() && reachability.values.none { it }) {
-                loungeDeviceReachable = false
-                loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
-                loungeReachabilityLastSuccess = 0L
-                Toast.makeText(context, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
-            }
-
-            if (isLoungeCasting) {
-                activeDevice?.let { device ->
-                    actions.add(context.getString(R.string.cast_sender_disconnect, device.name) to {
-                        disconnectFromLounge()
-                    })
-                }
-            } else if (activeDevice != null) {
-                actions.add(context.getString(R.string.cast_sender_disconnect, activeDevice.name) to {
-                    loungeSender.clearActiveDevice()
-                    loungeDeviceReachable = false
-                    lastAutoCastVideoId = null
-                    updateCastIcon()
-                    (context as? MainActivity)?.invalidateMenu()
-                    Toast.makeText(context, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
-                })
-            }
-            actions.add(context.getString(R.string.cast_sender_pair_via_code) to {
+            sheetBinding.pairButton.setOnClickListener {
+                dialog.dismiss()
                 try {
                     findFragment<PlayerFragment>().parentFragmentManager.let {
                         com.github.libretube.ui.dialogs.CastPairingDialog().show(
@@ -1316,16 +1367,101 @@ abstract class CustomExoPlayerView(
                 } catch (error: Exception) {
                     Log.w(this::class.simpleName, "Unable to open pairing dialog: ${error.message}")
                 }
-            })
+            }
 
-            MaterialAlertDialogBuilder(context)
-                .setTitle(R.string.cast)
-                .setItems(actions.map { it.first }.toTypedArray()) { dialog, which ->
-                    actions.getOrNull(which)?.second?.invoke()
-                    dialog.dismiss()
+            val disconnectLabel = activeDevice?.let {
+                context.getString(R.string.cast_sender_disconnect, it.name)
+            } ?: context.getString(R.string.cast_disconnected)
+            sheetBinding.disconnectButton.text = disconnectLabel
+            sheetBinding.disconnectButton.isVisible = activeDevice != null || isLoungeCasting
+            sheetBinding.disconnectButton.setOnClickListener {
+                dialog.dismiss()
+                if (isLoungeCasting) {
+                    disconnectFromLounge()
                 }
-                .show()
+                sender.clearActiveDevice()
+                loungeDeviceReachable = false
+                lastAutoCastVideoId = null
+                updateCastIcon()
+                (context as? MainActivity)?.invalidateMenu()
+                Toast.makeText(context, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
+            }
+
+            renderLoungeDevices(
+                sheetBinding,
+                pairedDevices,
+                reachability,
+                activeDevice,
+                sender,
+                lifecycleOwner,
+                dialog
+            )
+
+            dialog.show()
         }
+    }
+
+    private fun renderLoungeDevices(
+        sheetBinding: DialogCastDevicesBinding,
+        devices: List<LoungeDevice>,
+        reachability: Map<LoungeDevice, Boolean>,
+        activeDevice: LoungeDevice?,
+        sender: LoungeSender,
+        lifecycleOwner: LifecycleOwner,
+        dialog: BottomSheetDialog
+    ) {
+        val accent = MaterialColors.getColor(sheetBinding.root, androidx.appcompat.R.attr.colorPrimary)
+        val outline = MaterialColors.getColor(sheetBinding.root, com.google.android.material.R.attr.colorOutline)
+        val error = MaterialColors.getColor(sheetBinding.root, androidx.appcompat.R.attr.colorError)
+
+        sheetBinding.deviceList.removeAllViews()
+        sheetBinding.emptyState.isVisible = devices.isEmpty()
+
+        devices.forEach { device ->
+            val itemBinding = ItemCastDeviceBinding.inflate(LayoutInflater.from(context), sheetBinding.deviceList, false)
+            val reachable = reachability[device] == true
+            val isActive = activeDevice == device
+
+            itemBinding.deviceName.text = device.name
+            itemBinding.deviceStatus.text = context.getString(
+                if (reachable) R.string.cast_sender_status_online else R.string.cast_sender_status_offline
+            )
+            itemBinding.deviceStatus.setTextColor(if (reachable) accent else error)
+            itemBinding.deviceIcon.setImageResource(
+                if (isActive && reachable) R.drawable.ic_cast_connected else R.drawable.ic_cast
+            )
+            itemBinding.deviceBadge.isVisible = isActive && reachable
+            itemBinding.deviceBadge.text = context.getString(R.string.cast_connected)
+
+            itemBinding.root.isEnabled = reachable
+            itemBinding.root.alpha = if (reachable) 1f else 0.6f
+            itemBinding.root.strokeColor = if (isActive) accent else outline
+            itemBinding.root.strokeWidth = dp(if (isActive) 2f else 1f)
+
+            itemBinding.root.setOnClickListener {
+                loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
+                if (reachable) {
+                    loungeDeviceReachable = true
+                    loungeReachabilityLastSuccess = loungeReachabilityLastCheck
+                    sender.setActiveDevice(device)
+                    lastAutoCastVideoId = null
+                    sendCurrentToLounge(sender, device, lifecycleOwner)
+                    dialog.dismiss()
+                } else {
+                    loungeDeviceReachable = false
+                    loungeReachabilityLastSuccess = 0L
+                    Toast.makeText(context, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
+                    updateCastIcon()
+                    (context as? MainActivity)?.invalidateMenu()
+                }
+            }
+
+            sheetBinding.deviceList.addView(itemBinding.root)
+        }
+    }
+
+    private fun dp(value: Float): Int {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics).toInt()
     }
 
     private fun sendCurrentToLounge(
@@ -1467,6 +1603,10 @@ abstract class CustomExoPlayerView(
         loungeRemoteDriveUntilMs = 0L
         loungeLastTransitionSignature = null
         loungeLastTransitionMs = 0L
+        lastLoungeCaptionTrackId = null
+        lastLoungeAudioTrackId = null
+        PreferenceHelper.putString(PREF_LAUNCH_LAST_CAPTION_TRACK, "")
+        PreferenceHelper.putString(PREF_LAUNCH_LAST_AUDIO_TRACK, "")
 
         updateLoungeArtwork(null)
 
@@ -1657,6 +1797,42 @@ abstract class CustomExoPlayerView(
         lifecycleOwner.lifecycleScope.launch { loungeSender.previous() }
     }
 
+    fun isCastingToLounge(): Boolean = isLoungeCasting
+
+    fun syncLoungeCaptionTrack(trackId: String?) {
+        if (!isLoungeCasting) return
+        val normalized = trackId?.takeIf { it.isNotBlank() }
+        if (normalized == lastLoungeCaptionTrackId) return
+        val lifecycleOwner = findViewTreeLifecycleOwner() ?: return
+
+        lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { loungeSender.setCaptionTrack(normalized) }
+            if (result.isSuccess) {
+                lastLoungeCaptionTrackId = normalized
+                PreferenceHelper.putString(PREF_LAUNCH_LAST_CAPTION_TRACK, normalized.orEmpty())
+            } else {
+                Log.w("LoungeSender", "Failed to set caption track", result.exceptionOrNull())
+            }
+        }
+    }
+
+    fun syncLoungeAudioTrack(audioTrackId: String?) {
+        if (!isLoungeCasting) return
+        val normalized = audioTrackId?.takeIf { it.isNotBlank() }
+        if (normalized == lastLoungeAudioTrackId) return
+        val lifecycleOwner = findViewTreeLifecycleOwner() ?: return
+
+        lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { loungeSender.setAudioTrack(normalized) }
+            if (result.isSuccess) {
+                lastLoungeAudioTrackId = normalized
+                PreferenceHelper.putString(PREF_LAUNCH_LAST_AUDIO_TRACK, normalized.orEmpty())
+            } else {
+                Log.w("LoungeSender", "Failed to set audio track", result.exceptionOrNull())
+            }
+        }
+    }
+
     private fun maybeAutoCastCurrentItem(events: Player.Events) {
         if (!events.containsAny(
                 Player.EVENT_MEDIA_ITEM_TRANSITION,
@@ -1718,18 +1894,29 @@ abstract class CustomExoPlayerView(
                 loungeReachabilityLastCheck = SystemClock.elapsedRealtime()
                 if (reachable) {
                     loungeReachabilityLastSuccess = loungeReachabilityLastCheck
+                    status?.let {
+                        val localId = PlayingQueue.getCurrent()?.url?.toID()
+                        val remoteId = it.videoId
+                        val localPlaying = player?.isPlaying == true
+                        val needsAdopt = !isLoungeCasting || !localPlaying || (remoteId != null && remoteId != localId)
+                        if (remoteId != null && needsAdopt) {
+                            Log.d(
+                                "LoungeSender",
+                                "reachability adopt remote videoId=$remoteId localId=$localId localPlaying=$localPlaying"
+                            )
+                            adoptLoungeStatus(it)
+                        }
+                    }
                 } else {
                     loungeReachabilityLastSuccess = 0L
                     lastAutoCastVideoId = null
                 }
 
-                // If we are not currently casting but the receiver is already playing something, surface its state.
-                if (!isLoungeCasting && status?.videoId != null) {
-                    Log.d(
-                        "LoungeSender",
-                        "reachability nowPlaying videoId=${status.videoId} index=${status.currentIndex} queue=${status.videoIds?.size ?: 0}"
-                    )
-                    updateLoungeNowPlaying(status)
+                // Surface cast reachability to activity so toolbar icon stays fresh.
+                (context as? MainActivity)?.let { activity ->
+                    activity.lastCastReachable = reachable
+                    activity.lastCastReachabilityTimestamp = SystemClock.elapsedRealtime()
+                    activity.invalidateMenu()
                 }
 
                 updateCastIcon()
@@ -1739,6 +1926,11 @@ abstract class CustomExoPlayerView(
                 loungeDeviceReachable = false
                 loungeReachabilityLastSuccess = 0L
                 lastAutoCastVideoId = null
+                (context as? MainActivity)?.let { activity ->
+                    activity.lastCastReachable = false
+                    activity.lastCastReachabilityTimestamp = 0L
+                    activity.invalidateMenu()
+                }
                 updateCastIcon()
                 (context as? MainActivity)?.invalidateMenu()
             }
@@ -1793,5 +1985,7 @@ abstract class CustomExoPlayerView(
         private val LANDSCAPE_MARGIN_HORIZONTAL = 20f.dpToPx()
         private val LANDSCAPE_MARGIN_HORIZONTAL_NONE = 0f.dpToPx()
         private const val LOUNGE_REACHABILITY_STALE_MS = 45_000L
+        private const val PREF_LAUNCH_LAST_CAPTION_TRACK = "cast_last_caption_track"
+        private const val PREF_LAUNCH_LAST_AUDIO_TRACK = "cast_last_audio_track"
     }
 }

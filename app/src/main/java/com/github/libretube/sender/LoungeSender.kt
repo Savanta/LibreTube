@@ -189,6 +189,28 @@ class LoungeSender(@Suppress("UNUSED_PARAMETER") context: Context) {
         )
     )
 
+    suspend fun setCaptionTrack(trackId: String?): Result<Unit> = sendActions(
+        listOf(
+            LoungeAction(
+                name = "setCaptionTrack",
+                payload = json.encodeToJsonElement(
+                    SetCaptionTrackAction(trackId = trackId?.takeIf { it.isNotBlank() } ?: "")
+                )
+            )
+        )
+    )
+
+    suspend fun setAudioTrack(audioTrackId: String?): Result<Unit> = sendActions(
+        listOf(
+            LoungeAction(
+                name = "setAudioTrack",
+                payload = json.encodeToJsonElement(
+                    SetAudioTrackAction(audioTrackId = audioTrackId?.takeIf { it.isNotBlank() } ?: "")
+                )
+            )
+        )
+    )
+
     suspend fun next(): Result<Unit> = sendActions(listOf(LoungeAction("next")))
 
     suspend fun previous(): Result<Unit> = sendActions(listOf(LoungeAction("previous")))
@@ -848,6 +870,16 @@ class LoungeSender(@Suppress("UNUSED_PARAMETER") context: Context) {
                     fields["req${idx}_reason"] = it.reason.toString()
                     fields["req${idx}_seekPlaybackRate"] = it.seekPlaybackRate.toString()
                 }
+            } else if (action.name == "setCaptionTrack" && action.payload != null) {
+                val payload = runCatching { json.decodeFromJsonElement<SetCaptionTrackAction>(action.payload) }.getOrNull()
+                payload?.let {
+                    fields["req${idx}_trackId"] = it.trackId
+                }
+            } else if (action.name == "setAudioTrack" && action.payload != null) {
+                val payload = runCatching { json.decodeFromJsonElement<SetAudioTrackAction>(action.payload) }.getOrNull()
+                payload?.let {
+                    fields["req${idx}_audioTrackId"] = it.audioTrackId
+                }
             }
         }
         return fields
@@ -964,4 +996,14 @@ private data class SeekToAction(
     val newTime: Double,
     val reason: Int = 0,
     val seekPlaybackRate: Double = 1.0
+)
+
+@Serializable
+private data class SetCaptionTrackAction(
+    val trackId: String
+)
+
+@Serializable
+private data class SetAudioTrackAction(
+    val audioTrackId: String
 )

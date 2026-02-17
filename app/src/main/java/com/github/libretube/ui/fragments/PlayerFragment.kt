@@ -1447,6 +1447,8 @@ class PlayerFragment : Fragment(R.layout.fragment_player), OnlinePlayerOptions {
                     )
                 )
                 selectedAudioLanguageAndRoleFlags = selectedAudioFormat
+
+                binding.player.syncLoungeAudioTrack(selectedAudioFormat.first)
             }
         }
 
@@ -1503,6 +1505,8 @@ class PlayerFragment : Fragment(R.layout.fragment_player), OnlinePlayerOptions {
                 PlayerCommand.SET_SUBTITLE.name to subtitle
             )
         )
+
+        binding.player.syncLoungeCaptionTrack(subtitle?.code)
     }
 
     fun onUserLeaveHint() {
