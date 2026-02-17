@@ -10,6 +10,8 @@ import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.ScrollView
 import android.os.SystemClock
+import android.util.TypedValue
+import android.view.LayoutInflater
 import com.github.libretube.ui.dialogs.CastPairingDialog
 import android.widget.Toast
 import com.github.libretube.sender.LoungeSender
@@ -24,6 +26,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.allViews
 import androidx.core.view.children
 import androidx.core.view.isNotEmpty
+import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavController
@@ -62,7 +65,11 @@ import com.github.libretube.ui.models.SubscriptionsViewModel
 import com.github.libretube.ui.preferences.BackupRestoreSettings
 import com.github.libretube.ui.preferences.BackupRestoreSettings.Companion.FILETYPE_ANY
 import com.github.libretube.util.UpdateChecker
+import com.github.libretube.databinding.DialogCastDevicesBinding
+import com.github.libretube.databinding.ItemCastDeviceBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,8 +84,8 @@ class MainActivity : BaseActivity() {
 
     private var startFragmentId = R.id.homeFragment
 
-    private var lastCastReachable = false
-    private var lastCastReachabilityTimestamp = 0L
+    internal var lastCastReachable = false
+    internal var lastCastReachabilityTimestamp = 0L
     private val castReachabilityStaleMs = 60_000L
 
     private val searchViewModel: SearchViewModel by viewModels()
@@ -505,63 +512,128 @@ class MainActivity : BaseActivity() {
             }
 
             R.id.action_cast -> {
-                val sender = LoungeSender(this)
-                val devices = sender.pairedDevices()
-
-                if (devices.isEmpty()) {
-                    CastPairingDialog().show(supportFragmentManager, CastPairingDialog.REQUEST_KEY)
-                    return true
-                }
-
-                val actions = mutableListOf<Pair<String, () -> Unit>>()
-
-                sender.currentDevice()?.let { current ->
-                    actions.add(getString(R.string.cast_sender_disconnect, current.name) to {
-                        sender.clearActiveDevice()
-                        lastCastReachable = false
-                        lastCastReachabilityTimestamp = 0L
-                        invalidateMenu()
-                        Toast.makeText(this, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
-                    })
-                }
-
-                devices.forEach { device ->
-                    actions.add(getString(R.string.cast_sender_device_item, device.name) to {
-                        lifecycleScope.launch {
-                            val reachable = withContext(Dispatchers.IO) { sender.ping(device).isSuccess }
-                            lastCastReachabilityTimestamp = SystemClock.elapsedRealtime()
-                            lastCastReachable = reachable
-                            if (reachable) {
-                                sender.setActiveDevice(device)
-                                invalidateMenu()
-                                Toast.makeText(this@MainActivity, getString(R.string.cast_connected, device.name), Toast.LENGTH_SHORT).show()
-                            } else {
-                                sender.clearActiveDevice()
-                                invalidateMenu()
-                                Toast.makeText(this@MainActivity, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    })
-                }
-
-                actions.add(getString(R.string.cast_sender_pair_via_code) to {
-                    CastPairingDialog().show(supportFragmentManager, CastPairingDialog.REQUEST_KEY)
-                    invalidateMenu()
-                })
-
-                MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.cast_sender_manage)
-                    .setItems(actions.map { it.first }.toTypedArray()) { dialog, which ->
-                        actions.getOrNull(which)?.second?.invoke()
-                        dialog.dismiss()
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
+                showCastSheet()
                 true
             }
 
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    private fun showCastSheet() {
+        val sender = LoungeSender(this)
+        lifecycleScope.launch {
+            val paired = sender.pairedDevices()
+            val reachability = withContext(Dispatchers.IO) {
+                paired.associateWith { device -> sender.ping(device).isSuccess }
+            }
+            val active = sender.currentDevice()
+
+            val sheetBinding = DialogCastDevicesBinding.inflate(LayoutInflater.from(this@MainActivity))
+            val dialog = BottomSheetDialog(
+                this@MainActivity,
+                com.google.android.material.R.style.ThemeOverlay_Material3_BottomSheetDialog
+            )
+            dialog.setContentView(sheetBinding.root)
+
+            sheetBinding.subtitle.text = if (paired.isEmpty()) {
+                getString(R.string.cast_sender_pair_summary)
+            } else {
+                getString(R.string.cast_sender_manage_summary)
+            }
+
+            sheetBinding.refreshButton.setOnClickListener {
+                dialog.dismiss()
+                showCastSheet()
+            }
+
+            sheetBinding.pairButton.setOnClickListener {
+                dialog.dismiss()
+                CastPairingDialog().show(supportFragmentManager, CastPairingDialog.REQUEST_KEY)
+            }
+
+            val disconnectLabel = active?.let { getString(R.string.cast_sender_disconnect, it.name) }
+                ?: getString(R.string.cast_disconnected)
+            sheetBinding.disconnectButton.text = disconnectLabel
+            sheetBinding.disconnectButton.isVisible = active != null || lastCastReachable
+            sheetBinding.disconnectButton.setOnClickListener {
+                dialog.dismiss()
+                sender.clearActiveDevice()
+                lastCastReachable = false
+                lastCastReachabilityTimestamp = 0L
+                invalidateMenu()
+                Toast.makeText(this@MainActivity, R.string.cast_disconnected, Toast.LENGTH_SHORT).show()
+            }
+
+            renderCastDevices(sheetBinding, paired, reachability, active, sender, dialog)
+
+            dialog.show()
+        }
+    }
+
+    private fun renderCastDevices(
+        sheetBinding: DialogCastDevicesBinding,
+        devices: List<com.github.libretube.sender.LoungeDevice>,
+        reachability: Map<com.github.libretube.sender.LoungeDevice, Boolean>,
+        activeDevice: com.github.libretube.sender.LoungeDevice?,
+        sender: LoungeSender,
+        dialog: BottomSheetDialog
+    ) {
+        val accent = MaterialColors.getColor(sheetBinding.root, androidx.appcompat.R.attr.colorPrimary)
+        val outline = MaterialColors.getColor(sheetBinding.root, com.google.android.material.R.attr.colorOutline)
+        val error = MaterialColors.getColor(sheetBinding.root, androidx.appcompat.R.attr.colorError)
+
+        sheetBinding.deviceList.removeAllViews()
+        sheetBinding.emptyState.isVisible = devices.isEmpty()
+
+        devices.forEach { device ->
+            val itemBinding = ItemCastDeviceBinding.inflate(LayoutInflater.from(this), sheetBinding.deviceList, false)
+            val reachable = reachability[device] == true
+            val isActive = activeDevice == device
+
+            itemBinding.deviceName.text = device.name
+            itemBinding.deviceStatus.text = getString(
+                if (reachable) R.string.cast_sender_status_online else R.string.cast_sender_status_offline
+            )
+            itemBinding.deviceStatus.setTextColor(if (reachable) accent else error)
+            itemBinding.deviceIcon.setImageResource(
+                if (isActive && reachable) R.drawable.ic_cast_connected else R.drawable.ic_cast
+            )
+            itemBinding.deviceBadge.isVisible = isActive && reachable
+            itemBinding.deviceBadge.text = getString(R.string.cast_connected)
+
+            itemBinding.root.isEnabled = reachable
+            itemBinding.root.alpha = if (reachable) 1f else 0.6f
+            itemBinding.root.strokeColor = if (isActive) accent else outline
+            itemBinding.root.strokeWidth = dp(if (isActive) 2f else 1f)
+
+            itemBinding.root.setOnClickListener {
+                lifecycleScope.launch {
+                    val reachableNow = withContext(Dispatchers.IO) { sender.ping(device).isSuccess }
+                    lastCastReachabilityTimestamp = SystemClock.elapsedRealtime()
+                    lastCastReachable = reachableNow
+                    if (reachableNow) {
+                        sender.setActiveDevice(device)
+                        invalidateMenu()
+                        Toast.makeText(this@MainActivity, getString(R.string.cast_connected), Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    } else {
+                        sender.clearActiveDevice()
+                        invalidateMenu()
+                        Toast.makeText(this@MainActivity, R.string.cast_sender_device_unreachable, Toast.LENGTH_SHORT).show()
+                        itemBinding.deviceStatus.text = getString(R.string.cast_sender_status_offline)
+                        itemBinding.deviceStatus.setTextColor(error)
+                        itemBinding.root.alpha = 0.6f
+                    }
+                }
+            }
+
+            sheetBinding.deviceList.addView(itemBinding.root)
+        }
+    }
+
+    private fun dp(value: Float): Int {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics).toInt()
     }
 
     private fun loadIntentData() {

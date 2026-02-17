@@ -461,7 +461,7 @@
     <string name="cast">Cast to TV</string>
     <string name="cast_summary">Enable casting to TV devices (requires Google Play Services)</string>
     <string name="casting">Casting…</string>
-    <string name="cast_connected">Connected to %s</string>
+    <string name="cast_connected">Connected</string>
     <string name="cast_disconnected">Disconnected from TV</string>
     <string name="cast_sender_pair">Link SmartTube / YouTube TV</string>
     <string name="cast_sender_pair_summary">Pair a TV app using the on-screen code and send videos without Google Play Services.</string>

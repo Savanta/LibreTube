@@ -105,7 +105,7 @@ class PlayerSettings : BasePreferenceFragment() {
         ) { _, bundle ->
             val deviceName = bundle.getString(CastPairingDialog.KEY_DEVICE_NAME)
             castPairingPref?.summary = deviceName?.let {
-                getString(R.string.cast_connected, it)
+                getString(R.string.cast_connected)
             } ?: getCastPairingSummary()
         }
     }
@@ -130,7 +130,7 @@ class PlayerSettings : BasePreferenceFragment() {
 
     private fun getCastPairingSummary(): String {
         val current = LoungeSender(requireContext()).currentDevice()
-        if (current != null) return getString(R.string.cast_connected, current.name)
+        if (current != null) return getString(R.string.cast_connected)
         return getString(R.string.cast_sender_pair_summary)
     }
 }

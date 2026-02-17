@@ -95,13 +95,20 @@ class PlayingQueueSheet : ExpandedBottomSheet(R.layout.queue_bottom_sheet) {
                 PlayingQueue.remove(position)
                 adapter.notifyItemRemoved(position)
                 adapter.notifyItemRangeChanged(position, adapter.itemCount)
+                onQueueEdited?.invoke()
             },
             onDragListener = { from, to ->
                 PlayingQueue.move(from, to)
                 adapter.notifyItemMoved(from, to)
+                onQueueEdited?.invoke()
             }
         )
     }
+
+    /**
+     * Called when queue order/content changes while the sheet is open.
+     */
+    var onQueueEdited: (() -> Unit)? = null
 
     private fun updateRepeatButton() {
         binding.repeat.alpha = if (PlayingQueue.repeatMode == Player.REPEAT_MODE_OFF) 0.5f else 1f

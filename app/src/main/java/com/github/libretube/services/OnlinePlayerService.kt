@@ -178,8 +178,7 @@ open class OnlinePlayerService : AbstractPlayerService() {
                 // updateSessionPlayer(player) would destroy our session
                 
                 Log.d(TAG(), "Switched to Cast playback at ${currentPosition}ms")
-                toastFromMainThread(getString(R.string.cast_connected, 
-                    CastHelper.getConnectedDeviceName() ?: "TV"))
+                toastFromMainThread(getString(R.string.cast_connected))
             }
         } catch (e: Exception) {
             Log.e(TAG(), "Failed to switch to Cast", e)

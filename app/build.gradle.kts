@@ -168,7 +168,7 @@ dependencies {
     /* Retrofit and Kotlinx Serialization */
     implementation(libs.square.retrofit)
     implementation(libs.logging.interceptor)
-    implementation("com.squareup.okhttp3:okhttp-urlconnection:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-urlconnection:5.3.2")
     implementation(libs.kotlinx.serialization)
     implementation(libs.kotlinx.datetime)
     implementation(libs.converter.kotlinx.serialization)
